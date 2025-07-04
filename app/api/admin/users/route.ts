@@ -1,115 +1,99 @@
 import { NextRequest, NextResponse } from 'next/server';
-import dbConnect from '@/lib/db/connection';
-import User from '@/lib/models/User';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth/index';
+import { authOptions } from '@/lib/auth/options';
+import { prisma } from '@/lib/db/prisma';
+import { Prisma } from '@prisma/client';
 
-// Get all users (admin only)
+const DEFAULT_PAGE_SIZE = 15; // Adjust page size for users if needed
+
+// GET handler to fetch all users (Admin Only)
 export async function GET(request: NextRequest) {
+  // 1. Check Authentication & Authorization
+  const session = await getServerSession(authOptions);
+  
+  // Check if user is authenticated and is an admin
+  // Note: Relies on the `isAdmin` flag being populated in the session callback
+  // Need to cast session.user to include potentially custom fields like isAdmin
+  const userIsAdmin = session?.user ? (session.user as { isAdmin?: boolean }).isAdmin === true : false;
+
+  if (!session?.user?.id || !userIsAdmin) { 
+    console.log("Admin API access denied for fetching users", { 
+        userId: session?.user?.id, 
+        isAdmin: userIsAdmin 
+    });
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  // 2. Handle Pagination & Search
+  const { searchParams } = new URL(request.url);
+  const searchQuery = searchParams.get('search') || '';
+  const page = parseInt(searchParams.get('page') || '1', 10);
+  const limit = parseInt(searchParams.get('limit') || `${DEFAULT_PAGE_SIZE}`, 10);
+  const skip = (page - 1) * limit;
+
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session?.user || !session.user.isAdmin) {
-      return NextResponse.json({ error: 'Unauthorized - Admin access required' }, { status: 403 });
-    }
-    
-    await dbConnect();
-    
-    // Parse query parameters for pagination and filtering
-    const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '20');
-    const skip = (page - 1) * limit;
-    const search = searchParams.get('search') || '';
-    
-    // Build filter
-    const filter: any = {};
-    if (search) {
-      filter.$or = [
-        { username: { $regex: search, $options: 'i' } },
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } }
-      ];
-    }
-    
-    // Count total users for pagination
-    const total = await User.countDocuments(filter);
-    
-    // Fetch users
-    const users = await User.find(filter)
-      .select('-password')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-    
+    // 3. Construct filter condition based on search query
+    const whereCondition: Prisma.UserWhereInput = searchQuery
+      ? {
+          OR: [
+            {
+              name: {
+                contains: searchQuery,
+                mode: 'insensitive', // Case-insensitive search
+              },
+            },
+            {
+              email: {
+                contains: searchQuery,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        }
+      : {}; // Empty object if no search query
+
+    // 4. Fetch users and total count using Prisma transaction
+    const [users, totalUsers] = await prisma.$transaction([
+      prisma.user.findMany({
+        where: whereCondition,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          emailVerified: true,
+          image: true,
+          isAdmin: true,
+        },
+        orderBy: {
+          email: 'asc',
+        },
+        skip: skip,
+        take: limit,
+      }),
+      prisma.user.count({ where: whereCondition }),
+    ]);
+
+    // 5. Calculate pagination metadata
+    const totalPages = Math.ceil(totalUsers / limit);
+
+    // 6. Return the paginated user list
     return NextResponse.json({
       users,
       pagination: {
-        total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit)
-      }
+        currentPage: page,
+        totalPages,
+        pageSize: limit,
+        totalItems: totalUsers,
+      },
     });
+
   } catch (error) {
-    console.error('Error fetching users:', error);
-    return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 });
+    console.error('[GET Admin Users Error]', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch users' },
+      { status: 500 }
+    );
   }
 }
 
-// Create a new user (admin only)
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session?.user || !session.user.isAdmin) {
-      return NextResponse.json({ error: 'Unauthorized - Admin access required' }, { status: 403 });
-    }
-    
-    const { username, name, email, password, role, accountType, isPremium } = await request.json();
-    
-    // Validate required fields
-    if (!username || !name || !email || !password) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-    
-    await dbConnect();
-    
-    // Check if user already exists
-    const existingUser = await User.findOne({ 
-      $or: [{ email }, { username }] 
-    });
-    
-    if (existingUser) {
-      return NextResponse.json({ error: 'User with this email or username already exists' }, { status: 409 });
-    }
-    
-    // Create user with plain password - we'll hash it in the model's pre-save hook
-    const user = await User.create({
-      username,
-      name,
-      email,
-      password, // This will be hashed by the model
-      role: role || 'user',
-      accountType: accountType || 'user',
-      isPremium: isPremium || false
-    });
-    
-    // Return user without password
-    return NextResponse.json({
-      success: true,
-      user: {
-        id: user._id,
-        username: user.username,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        accountType: user.accountType,
-        isPremium: user.isPremium
-      }
-    }, { status: 201 });
-  } catch (error) {
-    console.error('Error creating user:', error);
-    return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
-  }
-} 
+// Note: POST, PUT, DELETE handlers for user management can be added here later.

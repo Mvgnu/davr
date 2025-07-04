@@ -2,7 +2,7 @@ import { IMarketplaceListing } from '@/lib/models/MarketplaceListing';
 import User from '@/lib/models/User';
 import RecyclingCenter from '@/lib/models/RecyclingCenter';
 import { Types } from 'mongoose';
-import { formatDate as formatDateUtil } from '@/lib/utils';
+import { formatDate as formatDateUtil } from '@/lib/utils/dateUtils';
 
 /**
  * Formats a price with Euro symbol and correct decimal places
@@ -73,9 +73,9 @@ export async function enhanceListingWithSellerInfo(
   listing: IMarketplaceListing & { _id: Types.ObjectId }
 ): Promise<any> {
   try {
-    // Convert to plain object
+    // Convert to plain object, asserting type for toObject
     const enhancedListing = {
-      ...(typeof listing.toObject === 'function' ? listing.toObject() : listing),
+      ...(typeof (listing as any).toObject === 'function' ? (listing as any).toObject() : listing),
       _id: listing._id.toString(),
       sellerId: listing.sellerId.toString(),
     };
@@ -88,7 +88,8 @@ export async function enhanceListingWithSellerInfo(
         _id: seller._id.toString(),
         name: seller.name,
         email: seller.email,
-        profileImage: seller.profileImage || '' // Handle potentially missing profileImage
+        // Access nested profile image
+        profileImage: seller.profile?.avatar || '' 
       };
     }
     
@@ -165,7 +166,8 @@ export function formatTimeAgo(date: Date | string | number): string {
   } else if (diffDay < 30) {
     return `vor ${diffDay} ${diffDay === 1 ? 'Tag' : 'Tagen'}`;
   } else {
-    return formatDateUtil(date);
+    // Ensure Date object is passed to formatDateUtil
+    return formatDateUtil(new Date(date));
   }
 }
 

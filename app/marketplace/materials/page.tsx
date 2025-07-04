@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ChevronRight, Search, Info } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { MATERIAL_CATEGORIES, MATERIALS, getMaterialsByCategory } from '@/lib/constants/materials';
-import dbConnect from '@/lib/db/connection';
-import RecyclingCenter from '@/lib/models/RecyclingCenter';
+import { prisma } from '@/lib/db/prisma';
 
 export const metadata: Metadata = {
   title: 'Recycling Material Ankauf | Preisvergleich für Wertstoffe',
@@ -22,34 +21,32 @@ interface MaterialCountData {
 }
 
 async function MaterialsMarketplacePage() {
-  // Connect to database and get statistics about materials
-  await dbConnect();
-  
-  // Aggregate to get count and max price for each material that is actively bought
-  const materialStats = await RecyclingCenter.aggregate([
-    { $unwind: '$buyMaterials' },
-    { $match: { 'buyMaterials.active': true } },
-    { 
-      $group: { 
-        _id: '$buyMaterials.materialId', 
-        count: { $sum: 1 },
-        maxPrice: { $max: '$buyMaterials.pricePerKg' }
-      } 
+  // Aggregate using Prisma 
+  const materialStats = await prisma.recyclingCenterOffer.groupBy({
+    by: ['material_id'],
+    where: {
+      price_per_unit: { not: null },
     },
-    {
-      $project: {
-        materialId: '$_id',
-        count: 1,
-        maxPrice: 1,
-        _id: 0
-      }
-    }
-  ]);
+    _count: {
+      material_id: true,
+    },
+    _max: {
+      price_per_unit: true,
+    },
+  });
   
   // Convert to a map for easier access
   const materialStatsMap: Record<string, MaterialCountData> = {};
-  materialStats.forEach((stat: MaterialCountData) => {
-    materialStatsMap[stat.materialId] = stat;
+  materialStats.forEach(stat => {
+    const maxPrice = stat._max?.price_per_unit;
+    const count = stat._count?.material_id;
+    if (stat.material_id && maxPrice !== null && maxPrice !== undefined && count !== null && count !== undefined) { 
+      materialStatsMap[stat.material_id] = {
+        materialId: stat.material_id,
+        count: count,
+        maxPrice: maxPrice, 
+      };
+    }
   });
   
   return (
@@ -91,15 +88,12 @@ async function MaterialsMarketplacePage() {
       {MATERIAL_CATEGORIES.map(category => {
         const materialsInCategory = getMaterialsByCategory(category.value);
         
-        // Skip categories with no materials
         if (materialsInCategory.length === 0) return null;
         
-        // Get materials that have buying centers
         const materialsWithBuyers = materialsInCategory.filter(
           material => materialStatsMap[material.value]
         );
         
-        // Skip categories with no buying centers
         if (materialsWithBuyers.length === 0) return null;
         
         return (

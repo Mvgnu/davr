@@ -21,6 +21,15 @@ export type RecyclingCenter = {
   isVerified: boolean;
 };
 
+export type Review = {
+  id: number;
+  author: string;
+  rating: number;
+  comment: string;
+  date: string;
+  ownerReply?: string;
+};
+
 export type RecyclingCenterDetail = RecyclingCenter & {
   description: string;
   address: string;
@@ -31,7 +40,7 @@ export type RecyclingCenterDetail = RecyclingCenter & {
   };
   openingHours?: any;
   materialsByCategory: Record<string, MaterialOffer[]>;
-  reviews: any[];
+  reviews?: Review[] | undefined;
   isOwner: boolean;
 }
 

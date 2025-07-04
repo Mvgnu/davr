@@ -1,86 +1,93 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { prisma } from '@/lib/db/prisma'; // Use Prisma client
+import { Prisma } from '@prisma/client'; // Import Prisma types
 
 export interface RecyclingStats {
   totalCenters: number;
   totalMaterials: number;
-  recyclingRate: number;
+  recyclingRate: number; // Keep placeholder value
   totalCities?: number;
   acceptanceRatio?: {
     recycling: number;
     purchase: number;
   };
   popularMaterials?: Array<{
-    id: number;
+    id: string; // Changed to string as Prisma uses CUIDs
     name: string;
-    category: string;
+    // category: string; // Removed category as it's not on Material model
     centerCount: number;
   }>;
 }
 
 /**
- * GET handler to fetch recycling center statistics
+ * GET handler to fetch recycling center statistics using Prisma
  */
 export async function GET() {
   try {
-    // Query the database to get various statistics
-    
     // Get total centers count
-    const centersQuery = 'SELECT COUNT(*) as count FROM recycling_centers';
-    const centersResult = await query(centersQuery);
-    const totalCenters = parseInt(centersResult.rows[0].count);
-    
+    const totalCenters = await prisma.recyclingCenter.count();
+
     // Get total materials count
-    const materialsQuery = 'SELECT COUNT(*) as count FROM materials WHERE parent_id IS NULL';
-    const materialsResult = await query(materialsQuery);
-    const totalMaterials = parseInt(materialsResult.rows[0].count);
-    
-    // Get total cities count
-    const citiesQuery = 'SELECT COUNT(DISTINCT city) as count FROM recycling_centers';
-    const citiesResult = await query(citiesQuery);
-    const totalCities = parseInt(citiesResult.rows[0].count);
-    
-    // Get centers that purchase materials (price > 0)
-    const purchaseQuery = `
-      SELECT COUNT(DISTINCT recycling_center_id) as count 
-      FROM recycling_center_offers 
-      WHERE price > 0 AND is_active = true
-    `;
-    const purchaseResult = await query(purchaseQuery);
-    const purchaseCenters = parseInt(purchaseResult.rows[0].count);
-    
+    const totalMaterials = await prisma.material.count();
+
+    // Get total distinct cities count
+    const distinctCitiesResult = await prisma.recyclingCenter.findMany({
+      select: { city: true },
+      distinct: ['city'],
+      where: { city: { not: null } } // Ensure city is not null
+    });
+    const totalCities = distinctCitiesResult.length;
+
+    // Get count of distinct centers that purchase materials (price_per_unit > 0)
+    const purchaseCentersResult = await prisma.recyclingCenterOffer.groupBy({
+      by: ['recycling_center_id'],
+      where: {
+        price_per_unit: { gt: 0 }
+      },
+      _count: {
+        recycling_center_id: true
+      }
+    });
+    const purchaseCenters = purchaseCentersResult.length; // Count of groups is the count of distinct centers
+
     // Calculate acceptance ratio
     const acceptanceRatio = {
-      recycling: 1, // All centers accept recycling by definition
+      recycling: 1, // Assuming all centers accept recycling
       purchase: totalCenters > 0 ? purchaseCenters / totalCenters : 0
     };
+
+    // Get popular materials (top 5 by number of centers offering them)
+    const popularMaterialsGrouped = await prisma.recyclingCenterOffer.groupBy({
+      by: ['material_id'],
+      _count: {
+        recycling_center_id: true // Count distinct centers per material
+      },
+      orderBy: {
+        _count: {
+          recycling_center_id: 'desc'
+        }
+      },
+      take: 5,
+    });
     
-    // Get popular materials
-    const popularMaterialsQuery = `
-      SELECT 
-        m.id, 
-        m.name, 
-        m.category, 
-        COUNT(DISTINCT rco.recycling_center_id) as center_count
-      FROM materials m
-      JOIN recycling_center_offers rco ON m.id = rco.material_id
-      WHERE m.parent_id IS NULL AND rco.is_active = true
-      GROUP BY m.id, m.name, m.category
-      ORDER BY center_count DESC
-      LIMIT 5
-    `;
-    const popularMaterialsResult = await query(popularMaterialsQuery);
-    const popularMaterials = popularMaterialsResult.rows.map(row => ({
-      id: row.id,
-      name: row.name,
-      category: row.category,
-      centerCount: parseInt(row.center_count)
+    // Fetch material details for the top 5 IDs
+    const topMaterialIds = popularMaterialsGrouped.map(p => p.material_id);
+    const topMaterialDetails = await prisma.material.findMany({
+        where: { id: { in: topMaterialIds } },
+        select: { id: true, name: true }
+    });
+    const materialDetailsMap = new Map(topMaterialDetails.map(m => [m.id, m]));
+
+    // Map results to desired format
+    const popularMaterials = popularMaterialsGrouped.map(group => ({
+        id: group.material_id,
+        name: materialDetailsMap.get(group.material_id)?.name ?? 'Unknown Material',
+        centerCount: group._count.recycling_center_id
     }));
-    
-    // Assume a recycling rate of 65% for now
-    // In a real app, this would be calculated from actual recycling data
-    const recyclingRate = 0.65;
-    
+
+    // Placeholder recycling rate
+    const recyclingRate = 0.65; 
+
     const stats: RecyclingStats = {
       totalCenters,
       totalMaterials,
@@ -89,14 +96,15 @@ export async function GET() {
       acceptanceRatio,
       popularMaterials
     };
-    
+
     return NextResponse.json({
+      success: true, // Added success flag for consistency
       data: stats
     });
   } catch (error) {
-    console.error('Error fetching recycling statistics:', error);
+    console.error('Error fetching recycling statistics [Prisma]:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch recycling statistics' }, 
+      { success: false, error: 'Failed to fetch recycling statistics' }, 
       { status: 500 }
     );
   }

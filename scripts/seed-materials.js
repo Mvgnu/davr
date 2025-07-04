@@ -1,6 +1,7 @@
 // This script seeds the database with a comprehensive hierarchy of recycling materials
 // Using ES modules
-import pg from 'pg';
+import { PrismaClient, Prisma } from '@prisma/client';
+import slugify from 'slugify';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -8,10 +9,14 @@ import { dirname, join } from 'path';
 // Load environment variables
 dotenv.config();
 
-const { Client } = pg;
+const prisma = new PrismaClient();
 
 // Database connection string
 const DB_CONNECTION_STRING = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/davr';
+
+// Fix for ES modules __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Define materials with parent-child relationships
 const materialCategories = [
@@ -253,8 +258,8 @@ const materialCategories = [
         approximate_max_price: 0.20,
         image_url: '/images/materials/green-glass.jpg',
         subtypes: [
-          { name: 'Weinflaschen', description: 'Standardflaschen für Wein', recyclable: true },
-          { name: 'Saftflaschen', description: 'Flaschen für Säfte und andere Getränke', recyclable: true }
+          { name: 'Weinflaschen', description: 'Standard-Weinflaschen (grün)', recyclable: true },
+          { name: 'Sektflaschen', description: 'Flaschen für Schaumwein', recyclable: true }
         ]
       }
     ]
@@ -439,135 +444,82 @@ const materialCategories = [
   }
 ];
 
-// Function to seed materials with parent-child relationships
 async function seedMaterials() {
-  const client = new Client({
-    connectionString: DB_CONNECTION_STRING
-  });
+  console.log('Seeding materials using Prisma Client...');
 
-  try {
-    await client.connect();
-    console.log('Connected to database');
+  for (const category of materialCategories) {
+    console.log(`Processing category: ${category.name}`);
+    // Create/update parent category material
+    const parentSlug = slugify(category.name, { lower: true, strict: true });
+    let parentMaterial = await prisma.material.upsert({
+      where: { slug: parentSlug },
+      update: {
+        name: category.name,
+        description: category.description,
+      },
+      create: {
+        name: category.name,
+        slug: parentSlug,
+        description: category.description,
+      },
+    });
+    console.log(`  Upserted parent: ${parentMaterial.name} (ID: ${parentMaterial.id})`);
 
-    // First, check if materials already exist
-    const checkResult = await client.query('SELECT COUNT(*) FROM materials');
-    const count = parseInt(checkResult.rows[0].count);
-
-    if (count > 0) {
-      console.log(`Database already has ${count} materials. Use the --force flag to reseed.`);
-      if (!process.argv.includes('--force')) {
-        console.log('Exiting without seeding. Use --force to replace existing data.');
-        await client.end();
-        return;
-      }
-      console.log('Force flag detected. Clearing existing materials...');
-      await client.query('DELETE FROM materials');
-    }
-
-    console.log('Seeding materials...');
-
-    // For each category, insert parent materials and their children
-    for (const category of materialCategories) {
-      console.log(`Processing category: ${category.name}`);
+    for (const material of category.materials) {
+      const childSlug = slugify(material.name, { lower: true, strict: true });
+      // Create/update child material linked to parent
+      let childMaterial = await prisma.material.upsert({
+        where: { slug: childSlug },
+        update: {
+          name: material.name,
+          // description: material.description, // Add description if available in data
+          parent_id: parentMaterial.id,
+        },
+        create: {
+          name: material.name,
+          slug: childSlug,
+          // description: material.description, // Add description if available in data
+          parent_id: parentMaterial.id,
+        },
+      });
+      console.log(`    Upserted child: ${childMaterial.name} (Parent: ${parentMaterial.name})`);
       
-      for (const material of category.materials) {
-        // Insert the parent material
-        const parentQuery = `
-          INSERT INTO materials (name, description, category, subtype, recyclable, market_value_level, 
-                               approximate_min_price, approximate_max_price, image_url)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          RETURNING id
-        `;
-        
-        const parentValues = [
-          material.name,
-          material.description || `${material.name} recycling material`,
-          category.name,
-          material.subtype,
-          material.recyclable,
-          material.market_value_level,
-          material.approximate_min_price,
-          material.approximate_max_price,
-          material.image_url
-        ];
-        
-        const parentResult = await client.query(parentQuery, parentValues);
-        const parentId = parentResult.rows[0].id;
-        
-        console.log(`  Added parent material: ${material.name} (ID: ${parentId})`);
-        
-        // Insert all subtypes as child materials
-        if (material.subtypes && material.subtypes.length > 0) {
-          for (const subtype of material.subtypes) {
-            const childQuery = `
-              INSERT INTO materials (name, description, category, subtype, recyclable, parent_id, 
-                                   market_value_level, approximate_min_price, approximate_max_price)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-              RETURNING id
-            `;
-            
-            const childValues = [
-              subtype.name,
-              subtype.description || `${subtype.name} - a type of ${material.name}`,
-              category.name,
-              `${material.subtype} - subtype`,
-              subtype.recyclable,
-              parentId,
-              material.market_value_level,
-              material.approximate_min_price * 0.9, // Slightly lower than parent
-              material.approximate_max_price * 0.9  // Slightly lower than parent
-            ];
-            
-            const childResult = await client.query(childQuery, childValues);
-            console.log(`    Added subtype: ${subtype.name} (ID: ${childResult.rows[0].id})`);
-          }
+      // Handle tertiary subtypes if they exist (assuming schema supports another level or just flatten)
+      if (material.subtypes) {
+        for (const subtype of material.subtypes) {
+            const subtypeSlug = slugify(subtype.name, { lower: true, strict: true });
+             // Create/update subtype material linked to child
+            await prisma.material.upsert({
+                where: { slug: subtypeSlug },
+                update: {
+                    name: subtype.name,
+                    description: subtype.description,
+                    parent_id: childMaterial.id,
+                },
+                create: {
+                    name: subtype.name,
+                    slug: subtypeSlug,
+                    description: subtype.description,
+                    parent_id: childMaterial.id,
+                },
+            });
+            console.log(`      Upserted subtype: ${subtype.name} (Parent: ${childMaterial.name})`);
         }
       }
     }
-
-    console.log('Materials seeding completed successfully!');
-  } catch (error) {
-    console.error('Error seeding materials:', error);
-  } finally {
-    await client.end();
-    console.log('Database connection closed');
   }
+  console.log('Material seeding completed.');
 }
 
-// Add parent_id column if it doesn't exist
-async function ensureParentIdColumn() {
-  const client = new Client({
-    connectionString: DB_CONNECTION_STRING
-  });
-
+async function main() {
   try {
-    await client.connect();
-    
-    // Check if parent_id column exists
-    const checkColumnQuery = `
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'materials' AND column_name = 'parent_id'
-    `;
-    const result = await client.query(checkColumnQuery);
-    
-    if (result.rows.length === 0) {
-      console.log('Adding parent_id column to materials table...');
-      await client.query('ALTER TABLE materials ADD COLUMN parent_id INTEGER REFERENCES materials(id)');
-      console.log('Added parent_id column successfully');
-    } else {
-      console.log('parent_id column already exists');
-    }
+    await seedMaterials();
   } catch (error) {
-    console.error('Error ensuring parent_id column:', error);
+    console.error("Error during material seeding:", error);
+    process.exit(1);
   } finally {
-    await client.end();
+    await prisma.$disconnect();
   }
 }
 
-async function run() {
-  await ensureParentIdColumn();
-  await seedMaterials();
-}
-
-run().catch(console.error); 
+main(); 

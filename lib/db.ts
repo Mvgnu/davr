@@ -1,5 +1,4 @@
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
-import { neon } from '@neondatabase/serverless';
 
 // Get database connection string from environment variables
 const connectionString = process.env.DATABASE_URL || '';
@@ -9,47 +8,37 @@ if (!connectionString) {
   console.error('DATABASE_URL environment variable is not set!');
 }
 
-// Initialize the pool with a dummy implementation first
-let pool: Pool = new Pool(); // This will be overwritten below
+// Initialize Postgres connection pool with better error handling
+console.log('Initializing database connection pool');
+console.log(`Database URL: ${connectionString ? connectionString.replace(/:[^:]*@/, ':****@') : 'Not set'}`);
 
-// Initialize connection pool differently based on environment
-if (process.env.NODE_ENV === 'production') {
-  // For production, use a standard pool
-  pool = new Pool({
-    connectionString,
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-  });
-} else {
-  // For development/other environments
-  try {
-    // Regular Postgres database (default)
-    pool = new Pool({
-      connectionString,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
-    
-    // Special handling for Neon is done in the query function
-  } catch (err) {
-    console.error('Failed to initialize database pool:', err);
-    // Set up a dummy pool that will throw meaningful errors
-    // This allows the application to at least start and show proper error messages
-    // @ts-ignore - Intentionally creating a mock for error handling
-    pool = {
-      query: () => Promise.reject(new Error('Database connection not initialized')),
-      connect: () => Promise.reject(new Error('Database connection not initialized')),
-      end: () => Promise.resolve(),
-    };
-  }
-}
+const pool = new Pool({
+  connectionString,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
 
 // Test the connection on startup
 pool.query('SELECT NOW()')
-  .then(() => console.log('🔋 Database connection established'))
-  .catch(err => console.error('⚠️ Database connection failed:', err));
+  .then((result) => {
+    console.log('🔋 Database connection established');
+    console.log(`Connected to database at time: ${result.rows[0].now}`);
+  })
+  .catch(err => {
+    console.error('⚠️ Database connection failed:', err.message);
+    console.error('Connection details:', {
+      host: new URL(connectionString).hostname,
+      port: new URL(connectionString).port,
+      database: new URL(connectionString).pathname.slice(1),
+      user: new URL(connectionString).username
+    });
+  });
+
+// Handle pool errors
+pool.on('error', (err) => {
+  console.error('Unexpected database pool error:', err.message);
+});
 
 /**
  * Execute a database query with parameters
@@ -61,22 +50,6 @@ export async function query<T extends QueryResultRow = any>(
   const start = Date.now();
   
   try {
-    // If using Neon database
-    if (connectionString.includes('neon.tech') && typeof neon === 'function') {
-      const sql = neon(connectionString);
-      const result = await sql(text, ...params) as unknown as T[];
-      
-      // Format the result to match the pg's QueryResult interface
-      return {
-        rows: result,
-        rowCount: result.length,
-        // These fields aren't really used in our code, so we're adding dummy values
-        command: '',
-        oid: 0,
-        fields: []
-      };
-    }
-    
     // Regular Pool query
     const res = await pool.query<T>(text, params);
     const duration = Date.now() - start;
@@ -89,6 +62,16 @@ export async function query<T extends QueryResultRow = any>(
     return res;
   } catch (error: any) {
     console.error('Query error:', error.message, { text, params });
+    
+    // Check for specific error types
+    if (error.code === 'ECONNREFUSED') {
+      console.error('Database connection refused. Check if the database server is running.');
+    } else if (error.code === '42P01') {
+      console.error('Relation does not exist. Check if the tables are properly created.');
+    } else if (error.code === '3D000') {
+      console.error('Database does not exist. Check DATABASE_URL and create the database.');
+    }
+    
     throw error;
   }
 }
@@ -118,7 +101,9 @@ export async function transaction<T = any>(
  * Gracefully close the database connection pool
  */
 export async function closePool(): Promise<void> {
+  console.log('Closing database connection pool');
   await pool.end();
+  console.log('Database connection pool closed');
 }
 
 // Export the pool for direct use when needed

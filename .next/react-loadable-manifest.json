@@ -1,16 +1,1 @@
-{
-  "components/recycling-centers/CentersListWithFilters.tsx -> ./CenterMapPreview": {
-    "id": "components/recycling-centers/CentersListWithFilters.tsx -> ./CenterMapPreview",
-    "files": [
-      "static/css/_app-pages-browser_components_recycling-centers_CenterMapPreview_tsx.css",
-      "static/chunks/_app-pages-browser_components_recycling-centers_CenterMapPreview_tsx.js"
-    ]
-  },
-  "components/recycling-centers/CentersListWithFilters.tsx -> ./CenterMapView": {
-    "id": "components/recycling-centers/CentersListWithFilters.tsx -> ./CenterMapView",
-    "files": [
-      "static/css/_app-pages-browser_components_recycling-centers_CenterMapView_tsx.css",
-      "static/chunks/_app-pages-browser_components_recycling-centers_CenterMapView_tsx.js"
-    ]
-  }
-}
+{}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import axios from '@/lib/axios';
-import { MaterialOffer } from '@/app/api/recycling-centers/[id]/route';
+import { MaterialOffer } from '@/lib/api/recyclingCenters';
 
 type MaterialOfferResponse = {
   offer: MaterialOffer;

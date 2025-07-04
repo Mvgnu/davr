@@ -24,6 +24,7 @@ import {
   MapIcon,
 } from 'lucide-react';
 import { debounce } from 'lodash';
+import { RecyclingCenter } from '@/lib/api/recyclingCenters';
 
 // Dynamically import the map component to avoid server-side rendering issues
 const CenterMapPreview = dynamic(() => import('./CenterMapPreview'), 
@@ -33,13 +34,6 @@ const CenterMapPreview = dynamic(() => import('./CenterMapPreview'),
 const CenterMapView = dynamic(() => import('./CenterMapView'), 
   { ssr: false, loading: () => <div className="h-[600px] bg-gray-100 animate-pulse rounded-lg flex items-center justify-center"><MapIcon className="text-gray-300 w-12 h-12" /></div> }
 );
-
-// Fixing the duplicated RecyclingCenter interface issue
-// We'll use the imported one from the API 
-import type { RecyclingCenter as ApiRecyclingCenter } from '@/app/api/recycling-centers/route';
-
-// Using a type alias to avoid conflicts
-type RecyclingCenterType = ApiRecyclingCenter;
 
 interface CentersListWithFiltersProps {
   initialCity?: string;
@@ -76,8 +70,8 @@ const CentersListWithFilters: React.FC<CentersListWithFiltersProps> = ({
   // Settings for pagination
   const itemsPerPage = 9;
   
-  // Data fetching state
-  const [centers, setCenters] = useState<RecyclingCenterType[]>([]);
+  // Data fetching state - Use RecyclingCenter from the API definition
+  const [centers, setCenters] = useState<RecyclingCenter[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<{
@@ -198,27 +192,34 @@ const CentersListWithFilters: React.FC<CentersListWithFiltersProps> = ({
 
   // Try to get user location on component mount
   useEffect(() => {
-    getUserLocation();
+    // Don't automatically request user location on page load
+    // getUserLocation();
+    
+    // Instead, initialize with default location
+    setUserLocation({
+      latitude: 52.520008, // Default latitude (Berlin)
+      longitude: 13.404954 // Default longitude (Berlin)
+    });
   }, []);
 
   // Convert API center to RecyclingCenterCard props format
-  const mapCenterToCardProps = (center: RecyclingCenterType) => {
+  const mapCenterToCardProps = (center: RecyclingCenter) => {
     // Get the current time to determine if the center is open (simplified example)
     const now = new Date();
     const hour = now.getHours();
     const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
     const isOpen = isWeekday && hour >= 8 && hour < 18;
 
+    // Adjust property access based on API definition fields
     return {
-      id: typeof center.id === 'string' ? parseInt(center.id, 10) : center.id,
+      id: String(center.id), // Ensure ID is string for the card
       name: center.name,
-      city: center.location?.city,
-      state: center.location?.state,
+      city: center.location?.city ?? undefined, // Use location object
       address: `${center.location?.zipCode || ''} ${center.location?.city || ''}`,
-      isOpen: isOpen, // Use our calculated value
-      openUntil: "18:00", // This would be dynamically determined in a real app
-      rating: center.rating?.average || 0,
-      materials: center.acceptedMaterials || []
+      isOpen: isOpen,
+      openUntil: "18:00",
+      rating: center.rating?.average ?? undefined, // Use rating object
+      slug: center.slug ?? undefined
     };
   };
   

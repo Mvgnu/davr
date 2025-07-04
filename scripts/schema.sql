@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS recycling_center_offers (
   price DECIMAL(10, 2) NOT NULL DEFAULT 0,
   min_quantity DECIMAL(10, 2),
   notes TEXT,
-  is_active BOOLEAN DEFAULT TRUE,
+  active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (recycling_center_id, material_id)

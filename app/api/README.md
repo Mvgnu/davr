@@ -191,7 +191,7 @@ Deletes a recycling center.
 
 ### Recycling Center Offers (PostgreSQL)
 
-> **Note:** This is the newer, PostgreSQL-based API for recycling center material offers. It replaces the older MongoDB-based `/api/recycling-centers/[id]/buy-materials` endpoint.
+> **Note:** This is the newer, PostgreSQL-based API for recycling center material offers. It replaces the older MongoDB-based `/api/recycling-centers/[slug]/buy-materials` endpoint.
 
 #### GET /api/recycling-centers/offers
 

@@ -18,50 +18,49 @@ const RecyclingCenterSelector: React.FC<RecyclingCenterSelectorProps> = ({
   requireVerified = false
 }) => {
   const [centers, setCenters] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   
   useEffect(() => {
     const fetchCenters = async () => {
       try {
-        setLoading(true);
+        setIsLoading(true);
+        setError('');
+        const response = await fetch(`/api/users/${userId}/recycling-centers`);
         
-        const response = await fetch(`/api/recycling-centers?ownerId=${userId}`);
-        const data = await response.json();
-        
-        if (data.success) {
-          let filteredCenters = data.data;
+        if (response.ok) {
+          const data = await response.json();
+          setCenters(data.centers || []);
           
-          // Filter for verified centers if required
-          if (requireVerified) {
-            filteredCenters = filteredCenters.filter(
-              (center: any) => center.verificationStatus === 'verified'
-            );
-          }
-          
-          setCenters(filteredCenters);
-          
-          // Auto-select the first center if only one exists and no value is set
-          if (filteredCenters.length === 1 && !value) {
-            onChange(filteredCenters[0]._id);
+          // If no value is selected yet and we have centers
+          if ((!value || value === 'none') && data.centers?.length > 0) {
+            // Auto-select a verified center if required, otherwise select the first one
+            if (requireVerified) {
+              const verifiedCenter = data.centers.find((c: any) => c.verificationStatus === 'verified');
+              if (verifiedCenter) {
+                onChange(verifiedCenter._id);
+              }
+            } else if (!requireVerified && value !== 'none') {
+              onChange(data.centers[0]._id);
+            }
           }
         } else {
-          setError(data.message || 'Recycling-Center konnten nicht geladen werden');
+          setError('Failed to fetch recycling centers');
         }
       } catch (err) {
         console.error('Error fetching recycling centers:', err);
-        setError('Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut.');
+        setError('An error occurred while fetching recycling centers');
       } finally {
-        setLoading(false);
+        setIsLoading(false);
       }
     };
     
     if (userId) {
       fetchCenters();
     }
-  }, [userId, requireVerified, onChange, value]);
+  }, [userId, onChange, requireVerified, value]);
   
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-4">
         <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -100,7 +99,7 @@ const RecyclingCenterSelector: React.FC<RecyclingCenterSelectorProps> = ({
           <SelectValue placeholder="Als Privatperson" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">Als Privatperson</SelectItem>
+          <SelectItem value="none">Als Privatperson</SelectItem>
           {centers.map((center) => (
             <SelectItem key={center._id} value={center._id}>
               <div className="flex items-center">

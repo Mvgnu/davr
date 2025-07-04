@@ -9,6 +9,7 @@ A web application for managing recycling centers, material offers, and facilitat
 - Database integration with PostgreSQL
 - User authentication and role-based access control
 - Responsive UI using Next.js and Tailwind CSS
+- Edit and delete functionality for recycling centers with proper validation and authorization
 
 ## Prerequisites
 
@@ -59,6 +60,12 @@ Replace the credentials in the `DATABASE_URL` with your own PostgreSQL connectio
 
    # To add sample data, use the --seed flag
    node scripts/init-db.js --seed
+   
+   # If you experience database schema issues, run the schema fix
+   npm run db:fix-schema
+   
+   # To fix issues with the materials table and seed it with proper data
+   npm run db:fix-and-seed-materials
    ```
 
 ## Development
@@ -97,6 +104,9 @@ The application will be available at http://localhost:3000.
 
 - `POST /api/db/init` - Initialize database schema (dev/admin only)
 - `POST /api/db/init?seed=true` - Initialize and seed database (dev/admin only)
+- `npm run db:fix-schema` - Fix schema inconsistencies (particularly for `recycling_center_offers` table)
+- `npm run db:fix-materials` - Fix materials table structure to match schema
+- `npm run db:fix-and-seed-materials` - Fix materials table and populate with comprehensive recycling materials data
 
 ## Authentication
 

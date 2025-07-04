@@ -1,30 +1,38 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { prisma } from '@/lib/db/prisma'; // Use Prisma client
 
 /**
- * GET handler to fetch all cities with recycling centers
+ * GET handler to fetch all distinct cities with recycling centers using Prisma
  */
 export async function GET() {
   try {
-    // Query the database to get all unique cities
-    const citiesQuery = `
-      SELECT DISTINCT city 
-      FROM recycling_centers 
-      ORDER BY city ASC
-    `;
-    
-    const result = await query(citiesQuery);
+    // Query the database to get all unique, non-null cities
+    const citiesResult = await prisma.recyclingCenter.findMany({
+      select: {
+        city: true
+      },
+      where: {
+        city: {
+          not: null // Exclude entries where city is null
+        }
+      },
+      distinct: ['city'],
+      orderBy: {
+        city: 'asc'
+      }
+    });
     
     // Extract city names from the result
-    const cities = result.rows.map(row => row.city);
+    const cities = citiesResult.map(row => row.city);
     
     return NextResponse.json({
+      success: true, // Added success flag
       data: cities
     });
   } catch (error) {
-    console.error('Error fetching cities:', error);
+    console.error('Error fetching cities [Prisma]:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch cities' }, 
+      { success: false, error: 'Failed to fetch cities' }, 
       { status: 500 }
     );
   }

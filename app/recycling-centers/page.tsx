@@ -1,15 +1,15 @@
 // Server component for recycling centers page
 import { Suspense } from 'react';
-import { getPopularCities, getRecyclingStats, getAllMaterials, getAllCities } from '@/lib/data/recycling';
-import HeroSearch from '@/components/recycling-centers/HeroSearch';
-import QuickFilters from '@/components/recycling-centers/QuickFilters';
-import StatisticsPanel from '@/components/recycling-centers/StatisticsPanel';
-import PopularCitiesGrid from '@/components/recycling-centers/PopularCitiesGrid';
-import CentersListWithFilters from '@/components/recycling-centers/CentersListWithFilters';
-import RecyclingGuide from '@/components/recycling-centers/RecyclingGuide';
 import { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Frown, Search } from 'lucide-react';
+import React from 'react';
+import RecyclingCenterCard from '@/components/recycling/RecyclingCenterCard';
+import CenterFilters from '@/components/recycling/CenterFilters';
+import { prisma } from '@/lib/db/prisma';
+import { Prisma } from '@prisma/client';
+import PaginationControls from '@/components/ui/PaginationControls';
+import RecyclingCentersClientContent from './RecyclingCentersClientContent'; // Import the client component
 
 // Proper metadata configuration using Next.js metadata API
 export const metadata: Metadata = {
@@ -24,102 +24,138 @@ export const metadata: Metadata = {
   }
 };
 
-export default async function RecyclingCentersPage({
-  searchParams
-}: {
-  searchParams: { city?: string; material?: string; search?: string; view?: string; materials?: string }
-}) {
-  // Server-side data fetching
-  const [popularCities, recyclingStats, materials, allCities] = await Promise.all([
-    getPopularCities(),
-    getRecyclingStats(),
-    getAllMaterials(),
-    getAllCities()
-  ]);
+// Adjusted type to include fields needed by card
+type Center = {
+  id: string;
+  name: string;
+  address_street?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  slug?: string | null;
+  website?: string | null;
+  verification_status?: 'pending' | 'verified' | 'rejected' | null; // Need to include if used in Card
+};
+
+// Type for fetched center data
+type CenterForClient = {
+  id: string;
+  name: string;
+  address_street?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  slug?: string | null;
+  website?: string | null;
+  verification_status?: 'pending' | 'verified' | 'rejected' | null; // Keep if needed by card/schema exists
+};
+
+// Define type for searchParams prop
+interface PageProps {
+  searchParams: { [key: string]: string | string[] | undefined };
+}
+
+// Use Client Component Wrapper for Filters to avoid hydration mismatches with Suspense
+const FiltersWrapper = React.memo(() => {
+  return <CenterFilters />;
+});
+FiltersWrapper.displayName = 'FiltersWrapper';
+
+// Initial Data Fetching (Server-Side)
+async function fetchInitialData(searchParams: PageProps['searchParams']) {
+  const city = typeof searchParams.city === 'string' ? searchParams.city : undefined;
+  const materialName = typeof searchParams.material === 'string' ? searchParams.material : undefined;
+  const searchQuery = typeof searchParams.search === 'string' ? searchParams.search : undefined;
+  const page = typeof searchParams.page === 'string' ? parseInt(searchParams.page, 10) : 1;
+  const limit = typeof searchParams.limit === 'string' ? parseInt(searchParams.limit, 10) : 10;
+  const skip = (page - 1) * limit;
+
+  const whereClause: Prisma.RecyclingCenterWhereInput = {};
+  const andConditions: Prisma.RecyclingCenterWhereInput[] = [];
+
+  if (searchQuery) {
+    andConditions.push({
+      OR: [
+        { name: { contains: searchQuery, mode: 'insensitive' } },
+        { city: { contains: searchQuery, mode: 'insensitive' } },
+        { postal_code: { contains: searchQuery, mode: 'insensitive' } },
+      ]
+    });
+  }
+  if (city) {
+    andConditions.push({ city: { contains: city, mode: 'insensitive' } });
+  }
+  if (materialName) {
+    andConditions.push({
+      offers: {
+        some: {
+          material: {
+            name: { contains: materialName, mode: 'insensitive' },
+          },
+        },
+      }
+    });
+  }
+
+  if (andConditions.length > 0) {
+    whereClause.AND = andConditions;
+  }
+
+  try {
+    const [totalCenters, centers] = await Promise.all([
+      prisma.recyclingCenter.count({ where: whereClause }),
+      prisma.recyclingCenter.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          name: true,
+          address_street: true,
+          city: true,
+          postal_code: true,
+          slug: true,
+          website: true,
+          verification_status: true,
+        },
+        orderBy: { name: 'asc' },
+        skip: skip,
+        take: limit,
+      })
+    ]);
+
+    const typedCenters: CenterForClient[] = centers.map(center => ({
+        ...center,
+        verification_status: center.verification_status as 'pending' | 'verified' | 'rejected' | null
+    }));
+
+    return {
+        centers: typedCenters,
+        totalCenters,
+        currentPage: page,
+        limit,
+        error: null
+    };
+  } catch (error) {
+    console.error('[DB Fetch Initial Recycling Centers Error]', error);
+    return {
+        centers: [],
+        totalCenters: 0,
+        currentPage: page,
+        limit,
+        error: 'Fehler beim Laden der Recyclinghöfe.'
+    };
+  }
+}
+
+// The Server Component Page
+export default async function RecyclingCentersServerPage({ searchParams }: PageProps) {
+  const initialData = await fetchInitialData(searchParams);
 
   return (
-    <div className="container mx-auto px-6 py-8">
-      {/* Hero with integrated search */}
-      <HeroSearch 
-        stats={recyclingStats}
-        initialCity={searchParams.city || ''}
-        initialMaterial={searchParams.material || ''}
-        initialSearch={searchParams.search || ''}
-        materials={materials}
-        cities={allCities}
-      />
-      
-      {/* Main content with sidebar layout */}
-      <div className="flex flex-col lg:flex-row gap-8 mt-8">
-        {/* Sidebar with filters - Only visible on desktop */}
-        <div className="hidden lg:block lg:w-1/4 space-y-6">
-          <QuickFilters materials={materials} />
-          
-          {/* Link to all cities page */}
-          <div className="bg-white rounded-xl p-6 shadow-md border border-gray-100">
-            <h3 className="text-lg font-bold mb-4">Finden Sie Recyclingzentren nach Stadt</h3>
-            <p className="text-gray-600 mb-4 text-sm">
-              Durchsuchen Sie alle {allCities.length.toLocaleString()} Städte in unserer Datenbank und finden Sie Recyclingzentren in Ihrer Nähe.
-            </p>
-            <Link 
-              href="/recycling-centers/cities" 
-              className="flex items-center justify-between text-green-600 hover:text-green-800 font-medium"
-            >
-              <span>Alle Städte anzeigen</span>
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </div>
-        
-        {/* Main content area */}
-        <div className="flex-1">
-          {/* Centers list with integrated filter panel - Right at the top */}
-          <section id="centers-list" className="mb-8">
-            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-              <div className="flex items-center mb-4">
-                <h2 className="text-2xl font-bold text-gray-900">Recyclingcenter Verzeichnis</h2>
-              </div>
-              
-              {/* Quick filters - Only visible on mobile */}
-              <div className="lg:hidden mb-6">
-                <QuickFilters materials={materials} />
-              </div>
-              
-              <CentersListWithFilters
-                initialCity={searchParams.city || ''}
-                initialMaterial={searchParams.material || ''}
-                initialSearch={searchParams.search || ''}
-                materials={materials}
-              />
-            </div>
-          </section>
-          
-          {/* Statistics panel - Moved below the results */}
-          <Suspense fallback={<div className="h-32 bg-gray-100 animate-pulse mb-8 rounded-xl"></div>}>
-            <StatisticsPanel stats={recyclingStats} />
-          </Suspense>
-          
-          {/* Popular cities grid */}
-          <Suspense fallback={<div className="h-64 bg-gray-100 animate-pulse mb-8 rounded-xl"></div>}>
-            <div className="mb-8">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-2xl font-bold">Beliebte Städte</h2>
-                <Link 
-                  href="/recycling-centers/cities" 
-                  className="text-green-600 hover:text-green-800 font-medium flex items-center"
-                >
-                  <span>Alle Städte</span>
-                  <ArrowRight className="w-4 h-4 ml-1" />
-                </Link>
-              </div>
-              <PopularCitiesGrid cities={popularCities} />
-            </div>
-          </Suspense>
-        </div>
-      </div>
-      
-      {/* Recycling guide */}
-      <RecyclingGuide />
-    </div>
+    <RecyclingCentersClientContent
+      initialCenters={initialData.centers}
+      initialTotalCenters={initialData.totalCenters}
+      initialCurrentPage={initialData.currentPage}
+      initialLimit={initialData.limit}
+      initialError={initialData.error}
+      searchParams={searchParams} // Re-added searchParams prop
+    />
   );
 } 

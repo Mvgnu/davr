@@ -28,7 +28,7 @@ export function signToken(user: Partial<IUser> & { _id: any }): string {
   };
 
   // Sign and return the token
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY } as jwt.SignOptions);
 }
 
 /**

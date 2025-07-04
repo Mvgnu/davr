@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react'
+import Image from 'next/image'; // Import Image for logo
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -118,9 +119,19 @@ export default function RegisterPage() {
   }
   
   return (
-    <div className="flex items-center justify-center min-h-[calc(100vh-200px)] px-4 py-8">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
+    // Enhanced container with background and padding
+    <div className="flex items-center justify-center min-h-[calc(100vh-150px)] px-4 py-12 bg-gradient-to-b from-background to-muted/30">
+      {/* Added animation and enhanced styling */}
+      <Card 
+        className="w-full max-w-md border-border/60 shadow-lg animate-fade-in-up opacity-0"
+        style={{ animationFillMode: 'forwards' }}
+      >
+        <CardHeader className="space-y-1 items-center">
+          {/* Logo Placeholder */}
+          <div className="mb-4 text-2xl font-bold text-primary">
+            {/* <Image src="/images/logo.svg" alt="DAVR Logo" width={120} height={40} /> */}
+            DAVR Logo 
+          </div>
           <CardTitle className="text-2xl font-bold text-center">Konto erstellen</CardTitle>
           <CardDescription className="text-center">
             Geben Sie Ihre Daten ein, um ein neues Konto zu erstellen
@@ -128,15 +139,15 @@ export default function RegisterPage() {
         </CardHeader>
         
         <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5 px-6">
             {error && (
-              <Alert variant="destructive">
+              <Alert variant="destructive" className="bg-destructive/10 border-destructive/30 text-destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
             
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="name">Name</Label>
               <Input
                 id="name"
@@ -144,27 +155,29 @@ export default function RegisterPage() {
                 placeholder="Max Mustermann"
                 value={formData.name}
                 onChange={handleChange}
+                className="transition-colors duration-200 focus:border-primary focus:ring-primary/20"
                 disabled={isLoading}
                 required
               />
             </div>
             
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="email">E-Mail</Label>
               <Input
                 id="email"
                 name="email"
                 type="email"
-                placeholder="name@example.com"
+                placeholder="name@beispiel.de"
                 autoComplete="email"
                 value={formData.email}
                 onChange={handleChange}
+                className="transition-colors duration-200 focus:border-primary focus:ring-primary/20"
                 disabled={isLoading}
                 required
               />
             </div>
             
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="password">Passwort</Label>
               <div className="relative">
                 <Input
@@ -174,24 +187,25 @@ export default function RegisterPage() {
                   placeholder="••••••••"
                   value={formData.password}
                   onChange={handleChange}
+                  className="transition-colors duration-200 focus:border-primary focus:ring-primary/20 pr-10"
                   disabled={isLoading}
                   required
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition-colors duration-200"
                   onClick={() => togglePasswordVisibility('password')}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground pt-0.5">
                 Mindestens 8 Zeichen lang
               </p>
             </div>
             
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="confirmPassword">Passwort bestätigen</Label>
               <div className="relative">
                 <Input
@@ -201,12 +215,13 @@ export default function RegisterPage() {
                   placeholder="••••••••"
                   value={formData.confirmPassword}
                   onChange={handleChange}
+                  className="transition-colors duration-200 focus:border-primary focus:ring-primary/20 pr-10"
                   disabled={isLoading}
                   required
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition-colors duration-200"
                   onClick={() => togglePasswordVisibility('confirmPassword')}
                   aria-label={showConfirmPassword ? "Hide password" : "Show password"}
                 >
@@ -215,26 +230,24 @@ export default function RegisterPage() {
               </div>
             </div>
             
-            <div className="flex items-start space-x-2 pt-2">
+            <div className="flex items-start space-x-2.5 pt-2.5">
               <Checkbox 
                 id="terms" 
                 checked={formData.terms}
                 onCheckedChange={handleCheckboxChange}
+                className="mt-0.5 border-border data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
                 disabled={isLoading}
               />
               <label
                 htmlFor="terms"
-                className={cn(
-                  "text-sm leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
-                  "font-medium text-gray-900"
-                )}
+                className="text-sm font-normal leading-snug text-muted-foreground peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
               >
                 Ich stimme den{" "}
-                <Link href="/terms" className="text-primary underline underline-offset-4 hover:text-primary/90">
+                <Link href="/terms" className="font-medium text-primary underline underline-offset-4 hover:text-primary/90 transition-colors">
                   Nutzungsbedingungen
                 </Link>{" "}
                 und der{" "}
-                <Link href="/privacy" className="text-primary underline underline-offset-4 hover:text-primary/90">
+                <Link href="/privacy" className="font-medium text-primary underline underline-offset-4 hover:text-primary/90 transition-colors">
                   Datenschutzerklärung
                 </Link>{" "}
                 zu
@@ -242,29 +255,23 @@ export default function RegisterPage() {
             </div>
           </CardContent>
           
-          <CardFooter className="flex flex-col space-y-4">
+          <CardFooter className="flex flex-col space-y-4 px-6 pb-6 pt-4">
             <Button 
               type="submit" 
               className="w-full"
               disabled={isLoading}
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Wird erstellt...
-                </>
-              ) : (
-                'Konto erstellen'
-              )}
+              {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isLoading ? 'Registrierung läuft...' : 'Konto erstellen'}
             </Button>
             
             <div className="text-center text-sm">
-              Bereits registriert?{' '}
-              <Link 
-                href="/auth/login" 
-                className="font-medium text-primary hover:underline"
+              Bereits ein Konto?{' '}
+              <Link
+                href="/auth/login"
+                className="font-medium text-primary hover:underline hover:text-primary/90 transition-colors"
               >
-                Anmelden
+                Hier anmelden
               </Link>
             </div>
           </CardFooter>

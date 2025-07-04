@@ -1,4 +1,5 @@
-import { Metadata } from 'next';
+// No 'use client' - this will be a Server Component to fetch data
+import { Metadata } from 'next'; // Metadata can still be exported
 import Link from 'next/link';
 import { 
   Edit, 
@@ -8,35 +9,42 @@ import {
   Calendar, 
   Plus, 
   Eye,
-  FileText
+  FileText,
+  PlusCircle,
+  Trash2,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
+import { prisma } from '@/lib/db/prisma'; // Import Prisma client
+import { format } from 'date-fns'; // For date formatting
+import { de } from 'date-fns/locale'; // German locale for date formatting
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth/options';
+import { redirect, useSearchParams } from 'next/navigation';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Pagination } from '@/components/ui/pagination';
-
-// Helper function to create dropdown menu components (since they don't exist yet)
-const DropdownMenu = ({ children }: { children: React.ReactNode }) => <div className="relative">{children}</div>;
-const DropdownMenuTrigger = ({ asChild, children }: { asChild?: boolean, children: React.ReactNode }) => <div>{children}</div>;
-const DropdownMenuContent = ({ align, children }: { align?: string, children: React.ReactNode }) => <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white z-10">{children}</div>;
-const DropdownMenuLabel = ({ children }: { children: React.ReactNode }) => <div className="px-4 py-2 text-sm text-gray-700 font-medium">{children}</div>;
-const DropdownMenuItem = ({ children, className }: { children: React.ReactNode, className?: string }) => <div className={`px-4 py-2 text-sm cursor-pointer hover:bg-gray-100 ${className || ''}`}>{children}</div>;
-const DropdownMenuSeparator = () => <div className="border-t border-gray-200 my-1"></div>;
-
-// Helper function to create table components (since they don't exist yet)
-const Table = ({ children }: { children: React.ReactNode }) => <div className="w-full overflow-auto"><table className="w-full caption-bottom text-sm">{children}</table></div>;
-const TableHeader = ({ children }: { children: React.ReactNode }) => <thead className="[&_tr]:border-b">{children}</thead>;
-const TableBody = ({ children }: { children: React.ReactNode }) => <tbody className="[&_tr:last-child]:border-0">{children}</tbody>;
-const TableRow = ({ children }: { children: React.ReactNode }) => <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">{children}</tr>;
-const TableHead = ({ children, className }: { children: React.ReactNode, className?: string }) => <th className={`h-12 px-4 text-left align-middle font-medium text-muted-foreground ${className || ''}`}>{children}</th>;
-const TableCell = ({ children, className }: { children: React.ReactNode, className?: string }) => <td className={`p-4 align-middle ${className || ''}`}>{children}</td>;
-
-export const metadata: Metadata = {
-  title: 'Blog verwalten | Admin Dashboard | DAVR',
-  description: 'Verwalten und veröffentlichen Sie Blogbeiträge auf der DAVR-Plattform.',
-};
+import { 
+  Table, 
+  TableBody, 
+  TableCell, 
+  TableHead, 
+  TableHeader, 
+  TableRow 
+} from '@/components/ui/table';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuLabel, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu"; // Import actual dropdown
+import BlogActionsDropdown from '@/components/admin/BlogActionsDropdown'; // Import the actual dropdown component
+import AdminBlogDeleteButton from '@/components/admin/AdminBlogDeleteButton'; // Import the client-side delete button component
+import { ServerPaginationControls } from '@/components/ui/ServerPaginationControls'; // Import the new component
 
 // Type for blog post
 interface BlogPost {
@@ -48,7 +56,7 @@ interface BlogPost {
   category: string;
   publishedAt: string | null;
   updatedAt: string | null;
-  status: 'published' | 'draft';
+  status: 'published' | 'draft' | 'archived';
   featured: boolean;
 }
 
@@ -176,167 +184,158 @@ const blogPosts: BlogPost[] = [
   }
 ];
 
-export default function AdminBlogPage() {
-  // Pagination data (would be connected to API in real implementation)
-  const pagination = {
-    total: 32,
-    page: 1,
-    limit: 10,
-    totalPages: 4,
+export const metadata: Metadata = {
+  title: 'Admin - Blog verwalten',
+  description: 'Blog-Artikel erstellen, bearbeiten und veröffentlichen',
+};
+
+// Define the type for the selected post fields
+type PostForTable = {
+  id: string;
+  title: string;
+  slug: string;
+  author_name: string | null;
+  category: string | null;
+  published_at: Date | null;
+  updated_at: Date | null;
+  status: string; // Matches the expected prop type for BlogActionsDropdown
+};
+
+// Fetch paginated posts
+async function getPaginatedBlogPosts(page: number, pageSize: number) {
+  const skip = (page - 1) * pageSize;
+  const take = pageSize;
+
+  try {
+    const posts = await prisma.blogPost.findMany({
+      skip: skip,
+      take: take,
+      orderBy: { created_at: 'desc' }, // Order by creation date
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        status: true,
+        published_at: true,
+        created_at: true, // Keep created_at if needed elsewhere, or remove if only for sorting
+        updated_at: true,
+        author_name: true,
+      }
+    });
+
+    const totalCount = await prisma.blogPost.count(); // Get total count for pagination
+
+    return { posts, totalCount };
+  } catch (error) {
+    console.error("Failed to fetch paginated blog posts for admin:", error);
+    return { posts: [], totalCount: 0 };
+  }
+}
+
+export default async function AdminBlogPage({
+  searchParams,
+}: {
+  searchParams?: { [key: string]: string | string[] | undefined };
+}) { // Accept searchParams
+  const session = await getServerSession(authOptions);
+
+  // Admin check
+  if (!session?.user?.isAdmin) {
+    redirect('/login?callbackUrl=/admin/blog');
+  }
+
+  const currentPage = parseInt(searchParams?.page as string || '1', 10);
+  const pageSize = 10; // Or make this configurable
+
+  const { posts, totalCount } = await getPaginatedBlogPosts(currentPage, pageSize);
+  const totalPages = Math.ceil(totalCount / pageSize);
+
+  const getStatusBadgeVariant = (status: string): "default" | "secondary" | "outline" | "destructive" => {
+    switch (status) {
+      case 'published': return 'default';
+      case 'draft': return 'secondary';
+      case 'archived': return 'outline';
+      default: return 'outline';
+    }
   };
-  
-  // Handler for page changes
-  const handlePageChange = (page: number) => {
-    // In real implementation, this would update the URL or fetch new data
-    console.log(`Changing to page ${page}`);
-  };
-  
+
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold">Blog verwalten</h1>
-          <p className="text-gray-600 mt-1">Blog-Artikel erstellen, bearbeiten und veröffentlichen</p>
-        </div>
+    <div className="container mx-auto px-4 py-12 space-y-8">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold">Blog Post Management</h1>
         <Link href="/admin/blog/new">
           <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Neuen Artikel erstellen
+            <PlusCircle className="mr-2 h-4 w-4" /> Create New Post
           </Button>
         </Link>
       </div>
-      
-      {/* Filters and Search */}
-      <Card className="mb-8">
-        <CardContent className="pt-6">
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="relative flex-grow">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                type="search"
-                placeholder="Suche nach Titel, Autor oder Kategorie..."
-                className="pl-8"
-              />
-            </div>
-            
-            <div className="flex flex-col sm:flex-row gap-4">
-              <select className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background w-full sm:w-[180px]">
-                <option value="all-categories">Alle Kategorien</option>
-                <option value="trends">Trends</option>
-                <option value="wirtschaft">Wirtschaft</option>
-                <option value="politik">Politik</option>
-                <option value="nachhaltigkeit">Nachhaltigkeit</option>
-                <option value="technologie">Technologie</option>
-              </select>
-              
-              <select className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background w-full sm:w-[180px]">
-                <option value="all-status">Alle Status</option>
-                <option value="published">Veröffentlicht</option>
-                <option value="draft">Entwurf</option>
-              </select>
-              
-              <select className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background w-full sm:w-[180px]">
-                <option value="all-featured">Alle</option>
-                <option value="featured">Hervorgehoben</option>
-                <option value="not-featured">Nicht hervorgehoben</option>
-              </select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      
-      {/* Blog Posts Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Blog-Artikel</CardTitle>
-          <CardDescription>
-            Insgesamt {pagination.total} Artikel, Seite {pagination.page} von {pagination.totalPages}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
+
+      <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Title</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Author</TableHead>
+              <TableHead>Published</TableHead>
+              <TableHead>Last Updated</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {posts.length === 0 ? (
               <TableRow>
-                <TableHead>Titel</TableHead>
-                <TableHead>Autor</TableHead>
-                <TableHead>Kategorie</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Hervorgehoben</TableHead>
-                <TableHead>Veröffentlicht am</TableHead>
-                <TableHead>Zuletzt aktualisiert</TableHead>
-                <TableHead className="text-right">Aktionen</TableHead>
+                <TableCell colSpan={6} className="h-24 text-center">
+                  No blog posts found for this page.
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {blogPosts.map((post) => (
+            ) : (
+              posts.map((post) => (
                 <TableRow key={post.id}>
-                  <TableCell className="font-medium">{post.title}</TableCell>
-                  <TableCell>{post.author}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{post.category}</Badge>
+                  <TableCell className="font-medium">
+                    <Link href={`/blog/${post.slug}`} target="_blank" className="hover:underline" title="View Published Post (if applicable)">
+                      {post.title}
+                    </Link>
                   </TableCell>
                   <TableCell>
-                    {post.status === 'published' ? (
-                      <Badge className="bg-green-500">Veröffentlicht</Badge>
-                    ) : (
-                      <Badge className="bg-yellow-500">Entwurf</Badge>
-                    )}
+                    <Badge variant={getStatusBadgeVariant(post.status)}>
+                      {post.status.charAt(0).toUpperCase() + post.status.slice(1)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{post.author_name || 'N/A'}</TableCell>
+                  <TableCell>
+                    {post.published_at ? format(post.published_at, 'Pp', { locale: de }) : '-'}
                   </TableCell>
                   <TableCell>
-                    {post.featured ? (
-                      <Badge className="bg-blue-500">Hervorgehoben</Badge>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
+                    {/* Use created_at as fallback if updated_at is null/same */}
+                    {format(post.updated_at || post.created_at, 'Pp', { locale: de })} 
                   </TableCell>
-                  <TableCell>{post.publishedAt || '-'}</TableCell>
-                  <TableCell>{post.updatedAt || '-'}</TableCell>
                   <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span className="sr-only">Menü öffnen</span>
+                    <div className="flex justify-end gap-2">
+                      <Link href={`/admin/blog/edit/${post.id}`}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Edit className="h-4 w-4" />
+                          <span className="sr-only">Edit</span>
                         </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>Aktionen</DropdownMenuLabel>
-                        <DropdownMenuItem>
-                          <Eye className="mr-2 h-4 w-4" />
-                          <span>Vorschau</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Edit className="mr-2 h-4 w-4" />
-                          <span>Bearbeiten</span>
-                        </DropdownMenuItem>
-                        {post.status === 'draft' && (
-                          <DropdownMenuItem className="text-green-600">
-                            <FileText className="mr-2 h-4 w-4" />
-                            <span>Veröffentlichen</span>
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-red-600">
-                          <Trash className="mr-2 h-4 w-4" />
-                          <span>Löschen</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      </Link>
+                      <AdminBlogDeleteButton postId={post.id} postTitle={post.title} />
+                    </div>
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          
-          <div className="mt-6">
-            <Pagination 
-              currentPage={pagination.page} 
-              totalPages={pagination.totalPages} 
-              onPageChange={handlePageChange} 
-            />
-          </div>
-        </CardContent>
-      </Card>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Pagination Controls - Server Component Implementation */}
+      {totalPages > 1 && (
+        <ServerPaginationControls 
+          currentPage={currentPage} 
+          totalPages={totalPages} 
+          baseUrl="/admin/blog" 
+        />
+      )}
     </div>
   );
 } 

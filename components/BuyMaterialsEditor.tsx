@@ -4,7 +4,13 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Plus, Trash2, Save } from 'lucide-react';
-import { Select } from './ui/select';
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from './ui/select';
 import { Separator } from './ui/separator';
 import { Card } from './ui/card';
 import { useToast } from '@/lib/hooks/useToast';
@@ -161,18 +167,20 @@ const BuyMaterialsEditor: React.FC<BuyMaterialsEditorProps> = ({
                 <div>
                   <Label htmlFor={`material-${index}`}>Material</Label>
                   <Select
-                    id={`material-${index}`}
                     value={material.materialId}
-                    onChange={e => updateMaterial(index, 'materialId', e.target.value)}
+                    onValueChange={value => updateMaterial(index, 'materialId', value)}
                     disabled={isLoading || isSaving}
-                    className="w-full"
                   >
-                    <option value="">Material auswählen</option>
-                    {MATERIALS.map(m => (
-                      <option key={m.value} value={m.value}>
-                        {m.label}
-                      </option>
-                    ))}
+                    <SelectTrigger className="w-full" id={`material-${index}`}>
+                      <SelectValue placeholder="Material auswählen" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MATERIALS.map(m => (
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
                 

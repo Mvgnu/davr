@@ -1,43 +1,27 @@
 #!/usr/bin/env node
 
 /**
- * Simple script to run database migrations and seeding directly
+ * Simple script to run database migrations and seeding directly using exec instead of imports
  */
 
-const { spawn } = require('child_process');
+const { exec } = require('child_process');
 
-// Run Node.js with TypeScript support
-const command = 'npx';
-const args = ['ts-node', '-e', `
-const { runMigrations, seedDatabase } = require('./lib/db/migrations');
+// Run the migrations using ts-node
+console.log('🔧 Running database migrations...');
 
-async function init() {
-  try {
-    console.log('Starting database migrations...');
-    await runMigrations();
-    console.log('Database migrations completed successfully!');
-    
-    console.log('\\nStarting database seeding...');
-    await seedDatabase();
-    console.log('Database seeding completed successfully!');
-    
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during database initialization:', error);
+exec('npx ts-node --transpile-only scripts/db-migration-runner.js', (error, stdout, stderr) => {
+  if (error) {
+    console.error(`Error executing migrations: ${error.message}`);
+    console.error(stdout);
+    console.error(stderr);
     process.exit(1);
+    return;
   }
-}
-
-init();
-`];
-
-const child = spawn(command, args, {
-  stdio: 'inherit',
-  shell: true
-});
-
-child.on('close', (code) => {
-  if (code !== 0) {
-    console.error(`Process exited with code ${code}`);
+  
+  if (stderr) {
+    console.warn(`stderr: ${stderr}`);
   }
+  
+  console.log(stdout);
+  console.log('✅ Database setup completed successfully!');
 }); 

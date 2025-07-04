@@ -1,10 +1,8 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { JWT } from "next-auth/jwt";
-import dbConnect from "../db/connection";
-import User, { IUser } from "../models/User";
+import { query } from "@/lib/db";
 import { verifyClientHashedPassword } from "@/lib/utils/auth/serverPasswordUtils";
-import mongoose from "mongoose";
 
 // Extend the default session types
 declare module "next-auth" {
@@ -57,21 +55,26 @@ export const authOptions: NextAuthOptions = {
             return null;
           }
           
-          await dbConnect();
-          console.log('Database connected');
+          console.log('Querying the Postgres database for user');
           
-          // Find the user
-          const user = await User.findOne({ email: credentials.email });
+          // Find the user using Postgres query
+          const userResult = await query(
+            'SELECT * FROM users WHERE email = $1',
+            [credentials.email]
+          );
           
-          if (!user) {
+          if (userResult.rows.length === 0) {
             console.log('User not found:', credentials.email);
             throw new Error('Invalid email or password');
           }
           
+          const user = userResult.rows[0];
+          
           console.log('User found:', {
-            id: user._id,
+            id: user.id,
             email: user.email,
-            role: user.role
+            role: user.role,
+            roleUpperCase: user.role?.toUpperCase()
           });
           
           // The password coming from the client is already hashed using client-side hashing
@@ -89,15 +92,22 @@ export const authOptions: NextAuthOptions = {
           
           console.log('Password verified successfully');
           
-          // Access id safely since user is a Mongoose document
-          const userId = user._id ? user._id.toString() : '';
+          // Convert the role to uppercase for consistency
+          const role = user.role?.toUpperCase() || 'USER';
+          const isAdmin = role === 'ADMIN';
+          
+          console.log('Setting user role and admin status:', {
+            role,
+            isAdmin,
+            originalRole: user.role
+          });
           
           return {
-            id: userId,
+            id: user.id.toString(),
             email: user.email,
-            name: user.username || user.name,
-            isAdmin: user.role === 'admin',
-            role: user.role,
+            name: user.name,
+            isAdmin: isAdmin,
+            role: role,
           };
         } catch (error) {
           console.error('Authorization error:', error);
@@ -111,7 +121,8 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         console.log('Setting JWT token with user:', {
           id: user.id,
-          role: user.role
+          role: user.role,
+          isAdmin: user.isAdmin
         });
         token.id = user.id;
         token.isAdmin = user.isAdmin;
@@ -123,7 +134,8 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         console.log('Setting session with token:', {
           id: token.id,
-          role: token.role
+          role: token.role,
+          isAdmin: token.isAdmin
         });
         session.user.id = token.id;
         session.user.isAdmin = token.isAdmin;
@@ -133,8 +145,8 @@ export const authOptions: NextAuthOptions = {
     }
   },
   pages: {
-    signIn: "/login",
-    error: "/login",
+    signIn: "/auth/login",
+    error: "/auth/login",
   },
   session: {
     strategy: "jwt",

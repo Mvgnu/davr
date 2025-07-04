@@ -14,8 +14,7 @@ import {
 } from '@heroicons/react/24/outline'
 
 export default function Header() {
-  const { authState, logout } = useAuth()
-  const { isAuthenticated, user, isLoading } = authState
+  const { isAuthenticated, user, isLoading, logout } = useAuth()
   const pathname = usePathname()
   
   // Mobile menu state

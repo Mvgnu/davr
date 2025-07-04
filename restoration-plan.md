@@ -74,6 +74,7 @@
 - [x] Recreate admin dashboard pages
   - [x] /app/admin/page.tsx
   - [x] /app/admin/recycling-centers/page.tsx
+  - [x] /app/admin/recycling-centers/[id]/edit/page.tsx
   - [x] /app/admin/marketplace/page.tsx
   - [x] /app/admin/users/page.tsx
   - [x] /app/admin/blog/page.tsx
@@ -82,7 +83,8 @@
   - [ ] /app/profile/page.tsx
   - [ ] /app/profile/edit/page.tsx
 - [ ] Restore admin API routes
-  - [ ] /app/api/admin/recycling-centers/route.ts
+  - [x] /app/api/admin/recycling-centers/route.ts
+  - [x] /app/api/admin/recycling-centers/[id]/route.ts
   - [ ] /app/api/admin/marketplace/route.ts
   - [ ] /app/api/admin/users/route.ts
 

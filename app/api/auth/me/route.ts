@@ -1,26 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../[...nextauth]/route';
-import dbConnect from '@/lib/db/connection';
-import User from '@/lib/models/User';
+import { authOptions } from '@/lib/auth/options'; // Correct path based on file search
+import { prisma } from '@/lib/db/prisma'; // Use Prisma consistently
+
+export const dynamic = 'force-dynamic'; // Mark route as dynamic
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     
-    if (!session || !session.user) {
+    if (!session?.user?.id) { 
       return NextResponse.json({ 
         success: false, 
         message: 'Not authenticated' 
       }, { status: 401 });
     }
     
-    await dbConnect();
-    
-    // Find the user without returning the password
-    const user = await User.findOne({ email: session.user.email })
-      .select('-password')
-      .lean();
+    // Fetch user data from database using Prisma
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      // Select specific fields to return (exclude password)
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        image: true,
+        isAdmin: true, // Assuming isAdmin is a field on the User model now
+        // Removed fields causing type errors
+        // createdAt: true, 
+        // updatedAt: true, 
+        // Add other necessary fields like role if it exists on User model
+        // profile_image and bio seem non-standard, adjust based on actual schema
+      }
+    });
     
     if (!user) {
       return NextResponse.json({ 
@@ -29,18 +41,18 @@ export async function GET(request: NextRequest) {
       }, { status: 404 });
     }
     
-    // Format user data for client
+    // Format user data for client (adjust based on Prisma select)
     const userData = {
-      id: user._id ? user._id.toString() : '',
+      id: user.id,
       email: user.email,
       name: user.name,
-      role: user.role || 'user',
-      profileImage: user.profileImage || null,
-      bio: user.bio || '',
-      recyclingCenterIds: user.recyclingCenterIds || [],
-      savedListings: user.savedListings || [],
-      createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : null,
-      updatedAt: user.updatedAt ? new Date(user.updatedAt).toISOString() : null,
+      isAdmin: user.isAdmin, // Use the field from Prisma
+      // Map profileImage and bio if they are added to the Prisma select above
+      profileImage: user.image, // Map Prisma 'image' to 'profileImage' if needed
+      // bio: user.bio || '', // If bio is selected
+      // Removed formatting for fields not selected
+      // createdAt: user.createdAt ? user.createdAt.toISOString() : null,
+      // updatedAt: user.updatedAt ? user.updatedAt.toISOString() : null,
     };
     
     return NextResponse.json({ 
@@ -49,10 +61,12 @@ export async function GET(request: NextRequest) {
     });
     
   } catch (error) {
-    console.error('Error fetching user profile:', error);
+    console.error('Error fetching user profile [Prisma]:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ 
       success: false, 
-      message: 'An error occurred while fetching your profile' 
+      message: 'An error occurred while fetching your profile',
+      details: errorMessage
     }, { status: 500 });
   }
 } 

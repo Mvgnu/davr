@@ -16,10 +16,25 @@ export async function runMigrations() {
         password VARCHAR(255) NOT NULL,
         name VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
+        status VARCHAR(50) DEFAULT 'active',
+        verified BOOLEAN DEFAULT FALSE,
+        last_login TIMESTAMP,
+        profile_image VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    
+    // Update existing users table with new columns if they don't exist
+    try {
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'`);
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE`);
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP`);
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image VARCHAR(255)`);
+    } catch (error) {
+      console.error('Error adding columns to users table:', error);
+      // Continue with migrations even if column additions fail
+    }
     
     // Create materials table
     await query(`
@@ -119,6 +134,51 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_marketplace_listings_material ON marketplace_listings(material_id)
     `);
     
+    // Add columns for verified status and claim management to recycling centers
+    try {
+      await query(`
+        ALTER TABLE recycling_centers ADD COLUMN IF NOT EXISTS verification_status VARCHAR(50) DEFAULT 'unverified'
+      `);
+      await query(`
+        ALTER TABLE recycling_centers ADD COLUMN IF NOT EXISTS claimed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      `);
+    } catch (error) {
+      console.error('Error adding verification columns to recycling_centers table:', error);
+      // Continue with migrations even if column additions fail
+    }
+
+    // Create recycling center claims table
+    await query(`
+      CREATE TABLE IF NOT EXISTS recycling_center_claims (
+        id SERIAL PRIMARY KEY,
+        recycling_center_id INTEGER NOT NULL REFERENCES recycling_centers(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        phone VARCHAR(50),
+        company_name VARCHAR(255),
+        business_role VARCHAR(255),
+        message TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        rejection_reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    // Create indexes for faster claim lookups
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_recycling_center_claims_center ON recycling_center_claims(recycling_center_id)
+    `);
+    
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_recycling_center_claims_user ON recycling_center_claims(user_id)
+    `);
+    
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_recycling_center_claims_status ON recycling_center_claims(status)
+    `);
+    
     console.log('Database migrations completed successfully');
     return true;
   } catch (error) {
@@ -194,20 +254,20 @@ export async function seedDatabase() {
       // Create default admin user
       const hashedPassword = await bcrypt.hash('admin123', 10);
       await query(
-        'INSERT INTO users (email, password, name, role) VALUES ($1, $2, $3, $4)',
-        ['admin@example.com', hashedPassword, 'Admin User', 'admin']
+        'INSERT INTO users (email, password, name, role, verified, status) VALUES ($1, $2, $3, $4, $5, $6)',
+        ['admin@example.com', hashedPassword, 'Admin User', 'admin', true, 'active']
       );
       
       // Create some regular users
       const regularUserPassword = await bcrypt.hash('user123', 10);
       await query(
-        'INSERT INTO users (email, password, name, role) VALUES ($1, $2, $3, $4)',
-        ['user1@example.com', regularUserPassword, 'Regular User 1', 'user']
+        'INSERT INTO users (email, password, name, role, verified, status) VALUES ($1, $2, $3, $4, $5, $6)',
+        ['user1@example.com', regularUserPassword, 'Regular User 1', 'user', true, 'active']
       );
       
       await query(
-        'INSERT INTO users (email, password, name, role) VALUES ($1, $2, $3, $4)',
-        ['user2@example.com', regularUserPassword, 'Regular User 2', 'user']
+        'INSERT INTO users (email, password, name, role, verified, status) VALUES ($1, $2, $3, $4, $5, $6)',
+        ['user2@example.com', regularUserPassword, 'Regular User 2', 'user', false, 'pending']
       );
     }
     

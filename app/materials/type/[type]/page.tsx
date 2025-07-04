@@ -1,12 +1,13 @@
 import React from 'react';
 import Link from 'next/link';
 import { Metadata } from 'next';
-import { ArrowLeft, Recycle, Search, MapPin, Info, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Recycle, Search, MapPin, Info, ExternalLink, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ButtonLink } from '@/components/ui/button-link';
 import { slugify } from '@/lib/utils';
 import { JsonLd } from '@/components/JsonLd';
 import { notFound } from 'next/navigation';
+import { Badge } from '@/components/ui/badge';
 
 interface Material {
   id: string;
@@ -134,10 +135,12 @@ export default async function MaterialsTypePage({
     notFound();
   }
 
-  // Get all unique subtypes
-  const subtypes = Array.from(
-    new Set(materials.filter((m: Material) => m.subtype).map((m: Material) => m.subtype))
-  ).sort();
+  // Get all unique subtypes, ensuring type safety
+  const materialsWithSubtypes = materials
+    .filter((m: Material): m is Material & { subtype: string } => !!m.subtype);
+  const subtypeStrings = materialsWithSubtypes.map((m: Material & { subtype: string }) => m.subtype);
+  const uniqueSubtypes = subtypeStrings.filter((value: string, index: number, self: string[]) => self.indexOf(value) === index);
+  const subtypes = uniqueSubtypes.sort();
   
   // Filter materials by subtype if specified
   const filteredMaterials = subtypeFilter 
@@ -172,246 +175,112 @@ export default async function MaterialsTypePage({
     <>
       <JsonLd data={structuredData} />
       
-      <div className="container max-w-5xl mx-auto py-10 px-4 sm:px-6">
-        <div className="mb-6">
-          <Link 
-            href="/materials" 
-            className="inline-flex items-center text-blue-600 hover:text-blue-800 mb-4"
+      <div className="container max-w-5xl mx-auto py-12 px-4 sm:px-6 text-foreground">
+        <div className="mb-8 text-sm text-muted-foreground">
+           <Link href="/materials" className="hover:text-foreground transition-colors inline-flex items-center group">
+               <ArrowLeft className="w-4 h-4 mr-1.5 group-hover:-translate-x-1 transition-transform duration-200" />
+               Alle Materialien
+           </Link>
+           <span className="mx-2">/</span>
+           <span className="font-medium text-foreground">{localizedType}</span>
+        </div>
+          
+        <h1 
+          className="text-3xl md:text-4xl font-bold mb-3 text-foreground animate-fade-in-up opacity-0 [--animation-delay:100ms]"
+          style={{ animationFillMode: 'forwards' }}
+        >
+          {localizedType} Recycling
+        </h1>
+        <p 
+          className="text-lg text-muted-foreground mb-8 animate-fade-in-up opacity-0 [--animation-delay:200ms]"
+          style={{ animationFillMode: 'forwards' }}
+        >
+          Alles über {localizedType.toLowerCase()}-Recycling: Materialtypen, Eigenschaften und lokale Ankaufspreise.
+        </p>
+        
+        {subtypes.length > 0 && (
+          <div 
+             className="flex flex-wrap gap-2 my-6 animate-fade-in-up opacity-0 [--animation-delay:300ms]"
+             style={{ animationFillMode: 'forwards' }}
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Alle Materialien
-          </Link>
-          
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            {localizedType} Recycling
-          </h1>
-          
-          <p className="text-lg text-gray-700 mb-6">
-            Informationen über {localizedType.toLowerCase()} Recycling, Materialtypen und aktuelle Ankaufspreise
-          </p>
-          
-          {subtypes.length > 0 && (
-            <div className="flex flex-wrap gap-2 my-4">
+            <Link
+              href={`/materials/type/${params.type}`}
+              className={`px-3 py-1.5 rounded-md text-sm transition-all duration-200 border 
+                ${!subtypeFilter 
+                  ? 'bg-primary text-primary-foreground border-primary font-medium shadow-sm' 
+                  : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground hover:border-border'
+              }`}
+            >
+              Alle Untertypen
+            </Link>
+            
+            {subtypes.map((subtype: string) => (
               <Link
-                href={`/materials/type/${params.type}`}
-                className={`px-3 py-1 rounded-md text-sm ${
-                  !subtypeFilter ? 'bg-green-100 text-green-800 font-medium' : 'bg-gray-100 text-gray-800'
+                key={subtype}
+                href={`/materials/type/${params.type}?subtype=${subtype}`}
+                className={`px-3 py-1.5 rounded-md text-sm transition-all duration-200 border 
+                  ${subtypeFilter === subtype 
+                    ? 'bg-primary text-primary-foreground border-primary font-medium shadow-sm' 
+                    : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground hover:border-border'
                 }`}
               >
-                Alle
+                {subtype}
               </Link>
-              
-              {subtypes.map(subtype => (
-                <Link
-                  key={subtype}
-                  href={`/materials/type/${params.type}?subtype=${subtype}`}
-                  className={`px-3 py-1 rounded-md text-sm ${
-                    subtypeFilter === subtype ? 'bg-green-100 text-green-800 font-medium' : 'bg-gray-100 text-gray-800'
-                  }`}
-                >
-                  {subtype}
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
         
-        <div className="mb-10 p-4 border rounded-lg bg-green-50 border-green-100">
-          <h2 className="text-xl font-semibold text-green-800 mb-2">
-            {localizedType} in Ihrer Stadt verkaufen
+        <div 
+          className="mb-12 p-5 border border-border/80 rounded-lg bg-muted/50 animate-fade-in-up opacity-0 [--animation-delay:400ms]"
+          style={{ animationFillMode: 'forwards' }}
+        >
+          <h2 className="text-xl font-semibold text-foreground mb-3">
+            {localizedType} in Ihrer Nähe verkaufen
           </h2>
-          
-          <p className="text-green-700 mb-4">
-            Wählen Sie Ihre Stadt, um Recyclinghöfe und aktuelle Ankaufspreise für {localizedType.toLowerCase()} zu finden.
+          <p className="text-muted-foreground mb-5">
+            Wählen Sie Ihre Stadt, um lokale Recyclinghöfe und aktuelle Ankaufspreise für {localizedType.toLowerCase()} zu finden.
           </p>
-          
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {popularCities.map(city => (
               <ButtonLink
                 key={city}
                 href={`/materials/type/${params.type}/${slugify(city)}`}
                 variant="outline"
-                className="text-center justify-center text-sm"
+                className="text-center justify-center text-sm bg-background hover:bg-primary/10 hover:text-primary hover:border-primary/30 transition-all duration-200 h-10"
               >
-                <MapPin className="w-3 h-3 mr-1" />
+                <MapPin className="w-4 h-4 mr-1.5" />
                 {city}
               </ButtonLink>
             ))}
           </div>
-          
-          <div className="mt-3 flex justify-center">
-            <div className="relative max-w-md w-full">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type="text"
-                placeholder="Oder geben Sie Ihre Stadt/PLZ ein..."
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              />
-            </div>
-          </div>
         </div>
-        
-        <div className="mb-10">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">
-            {filteredMaterials.length} {localizedType} Materialien
-            {subtypeFilter && ` (${subtypeFilter})`}
-          </h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {filteredMaterials.map((material: Material) => (
-              <div 
-                key={material.id} 
-                className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow border border-gray-200"
-              >
-                <div className="p-6">
-                  <div className="flex items-center mb-4">
-                    {material.imageUrl ? (
-                      <img 
-                        src={material.imageUrl} 
-                        alt={material.name}
-                        className="w-16 h-16 object-cover rounded-md mr-4"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 rounded-md bg-gray-100 flex items-center justify-center mr-4">
-                        <Recycle className="h-8 w-8 text-gray-400" />
-                      </div>
-                    )}
-                    
-                    <div>
-                      <h3 className="text-xl font-semibold">{material.name}</h3>
-                      
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        {material.subtype && (
-                          <span className="px-2 py-0.5 bg-gray-100 text-gray-800 text-xs rounded">
-                            {material.subtype}
-                          </span>
-                        )}
-                        
-                        <span className={`px-2 py-0.5 rounded text-xs ${
-                          material.marketValueLevel === 'HIGH' ? 'bg-green-100 text-green-800' :
-                          material.marketValueLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-red-100 text-red-800'
-                        }`}>
-                          {material.marketValueLevel === 'HIGH' ? 'Hoher Wert' :
-                           material.marketValueLevel === 'MEDIUM' ? 'Mittlerer Wert' :
-                           'Niedriger Wert'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-3">
-                    {material.description}
-                  </p>
-                  
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <ButtonLink
-                      href={`/materials/${material.id}`}
-                      variant="outline"
-                      size="sm"
-                    >
-                      <Info className="w-3 h-3 mr-1" />
-                      Details
-                    </ButtonLink>
-                    
-                    <ButtonLink
-                      href={`/materials/type/${params.type}/${popularCities[0].toLowerCase()}`}
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700"
-                    >
-                      <MapPin className="w-3 h-3 mr-1" />
-                      Preise vergleichen
-                    </ButtonLink>
-                  </div>
+
+        <div 
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 animate-fade-in-up opacity-0 [--animation-delay:500ms]"
+          style={{ animationFillMode: 'forwards' }}
+        >
+          {filteredMaterials.map((material: Material, index: number) => (
+            <Link 
+              key={material.id} 
+              href={`/materials/${slugify(material.name)}`} 
+              className="group block h-full"
+            >
+              <div className="p-5 border border-border/80 rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 ease-in-out bg-card h-full flex flex-col justify-between hover:border-primary/30">
+                <div>
+                   <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors duration-200">{material.name}</h3>
+                   {material.description && <p className="text-sm text-muted-foreground mb-3 line-clamp-3">{material.description}</p>}
+                </div>
+                 <div className="flex flex-wrap gap-1 mt-2">
+                    {material.recyclable && <Badge variant="secondary" className="text-xs"><Recycle size={12} className="mr-1" /> Recycelbar</Badge>}
+                    <Badge variant="outline" className="text-xs">Wert: {material.marketValueLevel}</Badge>
+                 </div>
+                 <div className="flex justify-end items-center text-sm text-primary mt-3 pt-3 border-t border-border/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    Mehr erfahren 
+                    <ArrowRight className="w-4 h-4 ml-1 transform transition-transform duration-300 group-hover:translate-x-1" />
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-        
-        <div className="bg-white rounded-lg shadow-md p-6 mb-10">
-          <h2 className="text-xl font-bold mb-4">Häufig gestellte Fragen zum {localizedType} Recycling</h2>
-          
-          <div className="space-y-4">
-            <div>
-              <h3 className="font-semibold">Wie funktioniert das Recycling von {localizedType}?</h3>
-              <p className="text-gray-700 text-sm mt-1">
-                {localizedType} wird gesammelt, sortiert und zu speziellen Recyclinganlagen transportiert. 
-                Dort wird es je nach Material aufbereitet, geschmolzen oder anderweitig verarbeitet, um 
-                neue Rohstoffe zu gewinnen, die wieder in der Produktion eingesetzt werden können.
-              </p>
-            </div>
-            
-            <div>
-              <h3 className="font-semibold">Wo kann ich {localizedType} verkaufen?</h3>
-              <p className="text-gray-700 text-sm mt-1">
-                Sie können {localizedType} bei Recyclinghöfen, Schrottplätzen und speziellen Ankaufstellen verkaufen. 
-                Die Preise variieren je nach Standort, Material und aktueller Marktlage. Vergleichen Sie die Preise 
-                in Ihrer Umgebung für den besten Erlös.
-              </p>
-            </div>
-            
-            <div>
-              <h3 className="font-semibold">Welche {localizedType}-Materialien haben den höchsten Wert?</h3>
-              <p className="text-gray-700 text-sm mt-1">
-                Generell erzielen reinere und sortenreine Materialien höhere Preise. 
-                {filteredMaterials.some((m: Material) => m.marketValueLevel === 'HIGH') &&
-                  ' In dieser Kategorie haben besonders ' +
-                  filteredMaterials
-                    .filter((m: Material) => m.marketValueLevel === 'HIGH')
-                    .map((m: Material) => m.name)
-                    .join(', ') +
-                  ' einen hohen Marktwert.'
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-        
-        <div className="prose max-w-none">
-          <h2>Alles Wissenswerte über {localizedType} Recycling</h2>
-          
-          <p>
-            Das Recycling von {localizedType.toLowerCase()} ist ein wichtiger Beitrag zum Umweltschutz und zur Ressourcenschonung. 
-            Durch die Wiederverwertung können wertvolle Rohstoffe eingespart und die Umweltbelastung 
-            durch Neuproduktion reduziert werden.
-          </p>
-          
-          <h3>Die Bedeutung des {localizedType} Recyclings</h3>
-          
-          <p>
-            {localizedType} Recycling trägt wesentlich zur Reduktion von Abfall und zur Schonung natürlicher 
-            Ressourcen bei. Durch die Wiederverwertung werden nicht nur wertvolle Rohstoffe zurückgewonnen, 
-            sondern auch Energie eingespart, die sonst für die Neuproduktion aufgewendet werden müsste.
-          </p>
-          
-          <h3>Der Recyclingprozess</h3>
-          
-          <p>
-            Der Recyclingprozess für {localizedType.toLowerCase()} umfasst mehrere Schritte: Sammlung, Sortierung, 
-            Aufbereitung und Wiederverwendung. Moderne Recyclingtechnologien ermöglichen eine 
-            immer effizientere Rückgewinnung von Rohstoffen.
-          </p>
-          
-          <h3>Wirtschaftliche Aspekte</h3>
-          
-          <p>
-            Neben dem ökologischen Nutzen hat das Recycling von {localizedType.toLowerCase()} auch eine 
-            wirtschaftliche Dimension. Der Handel mit Sekundärrohstoffen schafft Arbeitsplätze und 
-            generiert Wertschöpfung. Für Verbraucher bietet der Verkauf von {localizedType.toLowerCase()} 
-            eine Möglichkeit, nicht mehr benötigte Materialien zu Geld zu machen.
-          </p>
-          
-          <h3>{localizedType} richtig entsorgen</h3>
-          
-          <p>
-            Um den maximalen Wert aus {localizedType.toLowerCase()} zu erzielen, sollte es richtig vorbereitet werden. 
-            Verunreinigungen sollten entfernt, verschiedene Materialien getrennt und gegebenenfalls 
-            nach Sorten sortiert werden. Dies erleichtert den Recyclingprozess und führt in der Regel 
-            zu höheren Ankaufspreisen.
-          </p>
+            </Link>
+          ))}
         </div>
       </div>
     </>

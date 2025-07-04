@@ -20,12 +20,12 @@ export default function AuthGuard({
 }: AuthGuardProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { authState } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
     // If auth state is no longer loading and user is not authenticated
-    if (!authState.isLoading && !authState.isAuthenticated) {
+    if (!isLoading && !isAuthenticated) {
       // Redirect to login with the current path as a redirect parameter
       if (pathname) {
         const encodedRedirect = encodeURIComponent(pathname);
@@ -33,17 +33,17 @@ export default function AuthGuard({
       } else {
         router.push(redirectTo);
       }
-    } else if (!authState.isLoading) {
+    } else if (!isLoading) {
       // User is authenticated, stop checking
       setIsChecking(false);
     }
-  }, [authState.isLoading, authState.isAuthenticated, router, pathname, redirectTo]);
+  }, [isLoading, isAuthenticated, router, pathname, redirectTo]);
 
   // Show loading spinner while checking authentication or loading auth state
-  if (isChecking || authState.isLoading) {
+  if (isChecking || isLoading) {
     return (
       <div className="flex justify-center items-center h-screen">
-        <LoadingSpinner size="large" />
+        <LoadingSpinner />
       </div>
     );
   }

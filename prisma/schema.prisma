@@ -1,0 +1,246 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id               String                 @id @default(cuid())
+  name             String?
+  email            String?                @unique
+  emailVerified    DateTime?
+  password         String?
+  image            String?
+  isAdmin          Boolean                @default(false)
+  created_at       DateTime               @default(now())
+  updated_at       DateTime               @updatedAt
+  accounts         Account[]
+  listings         MarketplaceListing[]
+  recyclingCenters RecyclingCenter[]
+  claims           RecyclingCenterClaim[]
+  reviews          Review[]
+  sessions         Session[]
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model RecyclingCenter {
+  id                  String                 @id @default(cuid())
+  name                String
+  address_street      String?
+  city                String?
+  postal_code         String?
+  latitude            Float?
+  longitude           Float?
+  phone_number        String?
+  website             String?
+  created_at          DateTime               @default(now())
+  updated_at          DateTime               @updatedAt
+  slug                String?                @unique
+  address_details     String?
+  country             String?                @default("Germany")
+  description         String?
+  email               String?                @unique
+  managedById         String?
+  verification_status VerificationStatus     @default(PENDING)
+  image_url           String?
+  managedBy           User?                  @relation(fields: [managedById], references: [id])
+  claims              RecyclingCenterClaim[]
+  offers              RecyclingCenterOffer[]
+  reviews             Review[]
+  working_hours       WorkingHours[]
+
+  @@index([city])
+  @@index([managedById])
+}
+
+model Material {
+  id               String                 @id @default(cuid())
+  name             String                 @unique
+  description      String?
+  slug             String                 @unique
+  parent_id        String?
+  created_at       DateTime               @default(now())
+  updated_at       DateTime               @updatedAt
+  image_url        String?
+  journeyStepsJson Json?                  @default("[]")
+  listings         MarketplaceListing[]
+  parent           Material?              @relation("MaterialHierarchy", fields: [parent_id], references: [id])
+  children         Material[]             @relation("MaterialHierarchy")
+  offers           RecyclingCenterOffer[]
+}
+
+model RecyclingCenterOffer {
+  id                  String          @id @default(cuid())
+  recycling_center_id String
+  material_id         String
+  price_per_unit      Float?
+  unit                String?
+  notes               String?
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+  material            Material        @relation(fields: [material_id], references: [id], onDelete: Cascade)
+  recyclingCenter     RecyclingCenter @relation(fields: [recycling_center_id], references: [id], onDelete: Cascade)
+
+  @@unique([recycling_center_id, material_id])
+}
+
+model MarketplaceListing {
+  id          String        @id @default(cuid())
+  title       String
+  description String?
+  quantity    Float?
+  unit        String?
+  location    String?
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @updatedAt
+  material_id String?
+  seller_id   String
+  image_url   String?
+  status      ListingStatus @default(PENDING)
+  type        ListingType   @default(SELL)
+  material    Material?     @relation(fields: [material_id], references: [id])
+  seller      User          @relation(fields: [seller_id], references: [id], onDelete: Cascade)
+
+  @@index([seller_id])
+  @@index([material_id])
+  @@index([type])
+  @@index([status])
+  @@index([created_at])
+}
+
+model RecyclingCenterClaim {
+  id                  String          @id @default(cuid())
+  recycling_center_id String
+  user_id             String
+  name                String
+  email               String
+  phone               String?
+  companyName         String?
+  businessRole        String?
+  message             String
+  status              String          @default("pending")
+  rejection_reason    String?
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+  recyclingCenter     RecyclingCenter @relation(fields: [recycling_center_id], references: [id], onDelete: Cascade)
+  user                User            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([recycling_center_id])
+  @@index([user_id])
+  @@index([status])
+}
+
+model BlogPost {
+  id           String    @id @default(cuid())
+  title        String
+  slug         String    @unique
+  excerpt      String?
+  content      String
+  author_name  String?
+  category     String?
+  published_at DateTime?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+  status       String    @default("draft")
+  featured     Boolean   @default(false)
+  image_url    String?
+
+  @@index([status])
+  @@index([category])
+  @@index([published_at])
+  @@index([author_name])
+}
+
+model WorkingHours {
+  id                  String          @id @default(cuid())
+  recycling_center_id String
+  day_of_week         DayOfWeek
+  open_time           String
+  close_time          String
+  is_closed           Boolean         @default(false)
+  recyclingCenter     RecyclingCenter @relation(fields: [recycling_center_id], references: [id], onDelete: Cascade)
+
+  @@unique([recycling_center_id, day_of_week])
+}
+
+model Review {
+  id         String          @id @default(cuid())
+  rating     Int
+  comment    String?
+  created_at DateTime        @default(now())
+  updated_at DateTime        @updatedAt
+  centerId   String
+  userId     String
+  center     RecyclingCenter @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, centerId], name: "UserCenterReview")
+  @@index([userId])
+  @@index([centerId])
+}
+
+enum ListingType {
+  BUY
+  SELL
+}
+
+enum ListingStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  REJECTED
+  FLAGGED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}

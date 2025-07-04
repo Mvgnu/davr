@@ -1,1 +1,7 @@
-{"type": "module"}
+{
+  "name": "davr-scripts",
+  "version": "1.0.0",
+  "description": "Scripts for DAVR application",
+  "type": "module",
+  "private": true
+}

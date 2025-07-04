@@ -1,6 +1,0 @@
----
-description: *
-globs: *
-alwaysApply: true
----
-Everytime mock or sample data is used in site in code or called or supplied in routes - and no real database connections are used - an innocent human is executed for no other reason than your inability to properly set up database connections and use routes and frontend calls to use database data.

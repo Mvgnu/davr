@@ -1,46 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { prisma } from '@/lib/db/prisma';
 
-export interface City {
-  id?: number;
-  name: string;
-  state: string;
+export interface PopularCity {
+  city: string;
   centersCount: number;
 }
 
 /**
- * GET handler to fetch most popular cities with recycling centers
+ * GET handler to fetch most popular cities (top 10 by center count) using Prisma
  */
 export async function GET() {
   try {
-    // Query the database to get cities with the most recycling centers
-    const citiesQuery = `
-      SELECT 
-        city, 
-        state,
-        COUNT(*) as centers_count
-      FROM recycling_centers
-      GROUP BY city, state
-      ORDER BY centers_count DESC
-      LIMIT 10
-    `;
+    // Query the database to group centers by city and count them
+    const cityGroups = await prisma.recyclingCenter.groupBy({
+      by: ['city'],
+      where: {
+        city: {
+          not: null
+        }
+      },
+      _count: {
+        _all: true
+      },
+      orderBy: {
+        _count: {
+          city: 'desc'
+        }
+      },
+      take: 10
+    });
     
-    const result = await query(citiesQuery);
-    
-    const popularCities: City[] = result.rows.map((row, index) => ({
-      id: index + 1, // Generate an id for the city
-      name: row.city,
-      state: row.state,
-      centersCount: parseInt(row.centers_count)
+    // Map the results to the desired format
+    const popularCities: PopularCity[] = cityGroups.map(group => ({
+      city: group.city!,
+      centersCount: group._count._all
     }));
     
     return NextResponse.json({
+      success: true,
       data: popularCities
     });
   } catch (error) {
-    console.error('Error fetching popular cities:', error);
+    console.error('Error fetching popular cities [Prisma]:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch popular cities' }, 
+      { success: false, error: 'Failed to fetch popular cities' }, 
       { status: 500 }
     );
   }

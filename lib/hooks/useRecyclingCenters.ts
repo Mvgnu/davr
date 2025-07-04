@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from '@/lib/axios';
-import { RecyclingCenter } from '@/app/api/recycling-centers/route';
-import { RecyclingCenterDetail } from '@/app/api/recycling-centers/[id]/route';
+import { RecyclingCenter, RecyclingCenterDetail } from '@/lib/api/recyclingCenters';
 
 type ApiResponse<T> = {
   data: T;

@@ -1,270 +1,305 @@
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useMaterialOffers } from '@/lib/hooks/useMaterialOffers';
-import { MaterialOffer, MaterialOfferFormData } from '@/lib/api/recyclingCenters';
-import axios from '@/lib/axios';
-import { Material } from '@/app/api/materials/route';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import * as z from 'zod';
+import { Button } from '@/components/ui/button';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Loader2 } from 'lucide-react';
 
-interface MaterialOfferFormProps {
-  centerId: string | number;
-  materialOfferId?: string | number;
-  onSuccess?: () => void;
-}
-
-const MaterialOfferForm: React.FC<MaterialOfferFormProps> = ({
-  centerId,
-  materialOfferId,
-  onSuccess
-}) => {
-  const router = useRouter();
-  const isEditMode = !!materialOfferId;
-  
-  const [formData, setFormData] = useState<MaterialOfferFormData>({
-    centerId,
-    materialId: '',
-    price: 0,
-    minQuantity: 0,
-    notes: '',
-    active: true
-  });
-  
-  const [materialOptions, setMaterialOptions] = useState<Array<{id: string | number; name: string}>>([]);
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  const { fetchOffer, addOffer, editOffer } = useMaterialOffers(centerId);
-
-  // Fetch material options from the real API
-  useEffect(() => {
-    const loadMaterialOptions = async () => {
-      try {
-        setLoading(true);
-        const response = await axios.get('/api/materials');
-        
-        if (response.data?.success && Array.isArray(response.data.data)) {
-          const materials = response.data.data.map((material: Material) => ({
-            id: material.id,
-            name: material.name
-          }));
-          setMaterialOptions(materials);
-        } else {
-          throw new Error('Invalid response format from materials API');
-        }
-      } catch (err) {
-        console.error('Failed to load materials:', err);
-        setError('Failed to load material options');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    loadMaterialOptions();
-  }, []);
-  
-  // If editing, fetch the existing offer
-  useEffect(() => {
-    const loadExistingOffer = async () => {
-      if (!materialOfferId) return;
-      
-      setLoading(true);
-      setError(null);
-      
-      try {
-        const offer = await fetchOffer(materialOfferId);
-        if (offer) {
-          setFormData({
-            centerId,
-            materialId: offer.materialId,
-            price: offer.price,
-            minQuantity: offer.minQuantity || 0,
-            notes: offer.notes || '',
-            active: true
-          });
-        }
-      } catch (err) {
-        setError('Failed to load material offer details');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    if (isEditMode) {
-      loadExistingOffer();
-    }
-  }, [materialOfferId, centerId, fetchOffer, isEditMode]);
-  
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target as HTMLInputElement;
-    
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'number' ? parseFloat(value) : value
-    }));
-  };
-  
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formData.materialId) {
-      setError('Please select a material');
-      return;
-    }
-    
-    if (formData.price <= 0) {
-      setError('Price must be greater than 0');
-      return;
-    }
-    
-    setSubmitting(true);
-    setError(null);
-    
-    try {
-      if (isEditMode && materialOfferId) {
-        await editOffer(materialOfferId, formData);
-      } else {
-        await addOffer(formData);
-      }
-      
-      if (onSuccess) {
-        onSuccess();
-      } else {
-        // Navigate back to the recycling center details
-        router.push(`/recycling-centers/${centerId}`);
-      }
-    } catch (err) {
-      setError(typeof err === 'string' ? err : 'Failed to save material offer');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  
-  if (loading && !isEditMode) {
-    return <div className="py-4 text-center">Loading materials...</div>;
-  }
-  
-  return (
-    <div className="max-w-2xl mx-auto bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        {isEditMode ? 'Edit Material Offer' : 'Add New Material Offer'}
-      </h2>
-      
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
-          {error}
-        </div>
-      )}
-      
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div>
-          <label htmlFor="materialId" className="block text-sm font-medium text-gray-700 mb-1">
-            Material *
-          </label>
-          <select
-            id="materialId"
-            name="materialId"
-            value={formData.materialId.toString()}
-            onChange={handleChange}
-            required
-            disabled={isEditMode}
-            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500"
-          >
-            <option value="">Select a material</option>
-            {materialOptions.map(material => (
-              <option key={material.id} value={material.id.toString()}>
-                {material.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        
-        <div>
-          <label htmlFor="price" className="block text-sm font-medium text-gray-700 mb-1">
-            Price per kg (€) *
-          </label>
-          <input
-            type="number"
-            id="price"
-            name="price"
-            value={formData.price}
-            onChange={handleChange}
-            min="0.01"
-            step="0.01"
-            required
-            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500"
-          />
-          <p className="mt-1 text-sm text-gray-500">
-            Enter the price you'll pay per kilogram
-          </p>
-        </div>
-        
-        <div>
-          <label htmlFor="minQuantity" className="block text-sm font-medium text-gray-700 mb-1">
-            Minimum Quantity (kg)
-          </label>
-          <input
-            type="number"
-            id="minQuantity"
-            name="minQuantity"
-            value={formData.minQuantity || ''}
-            onChange={handleChange}
-            min="0"
-            step="0.1"
-            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500"
-          />
-          <p className="mt-1 text-sm text-gray-500">
-            Minimum quantity you'll accept (leave empty if no minimum)
-          </p>
-        </div>
-        
-        <div>
-          <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">
-            Notes
-          </label>
-          <textarea
-            id="notes"
-            name="notes"
-            rows={3}
-            value={formData.notes || ''}
-            onChange={handleChange}
-            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500"
-            placeholder="Add any special requirements or conditions"
-          />
-        </div>
-        
-        <div className="flex items-center">
-          <input
-            type="checkbox"
-            id="active"
-            name="active"
-            checked={formData.active}
-            onChange={(e) => setFormData(prev => ({ ...prev, active: e.target.checked }))}
-            className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-          />
-          <label htmlFor="active" className="ml-2 block text-sm text-gray-700">
-            Active (visible to users)
-          </label>
-        </div>
-        
-        <div className="flex justify-end space-x-3">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {submitting ? 'Saving...' : isEditMode ? 'Update Offer' : 'Create Offer'}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
+type Material = {
+  id: number;
+  name: string;
+  category: string;
 };
 
-export default MaterialOfferForm; 
+type MaterialOffer = {
+  id?: number;
+  materialId: number;
+  materialName?: string;
+  price: number;
+  minQuantity: number;
+  maxQuantity?: number;
+  notes?: string;
+  active: boolean;
+};
+
+const materialOfferSchema = z.object({
+  materialId: z.number(),
+  price: z.number().min(0, 'Preis kann nicht negativ sein'),
+  minQuantity: z.number().min(0, 'Mindestmenge kann nicht negativ sein'),
+  maxQuantity: z.number().optional(),
+  notes: z.string().optional(),
+  active: z.boolean().default(true),
+});
+
+interface MaterialOfferFormProps {
+  materials: Material[];
+  selectedMaterialId: number | null;
+  onSelectMaterial: (materialId: number) => void;
+  initialData?: MaterialOffer;
+  onSubmit: (data: MaterialOffer) => void;
+  onCancel: () => void;
+}
+
+export default function MaterialOfferForm({
+  materials,
+  selectedMaterialId,
+  onSelectMaterial,
+  initialData,
+  onSubmit,
+  onCancel,
+}: MaterialOfferFormProps) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const form = useForm<z.infer<typeof materialOfferSchema>>({
+    resolver: zodResolver(materialOfferSchema),
+    defaultValues: {
+      materialId: initialData?.materialId || 0,
+      price: initialData?.price || 0,
+      minQuantity: initialData?.minQuantity || 0,
+      maxQuantity: initialData?.maxQuantity,
+      notes: initialData?.notes || '',
+      active: initialData?.active !== false,
+    },
+  });
+
+  // Set form values when initialData changes
+  useEffect(() => {
+    if (initialData) {
+      form.reset({
+        materialId: initialData.materialId,
+        price: initialData.price,
+        minQuantity: initialData.minQuantity,
+        maxQuantity: initialData.maxQuantity,
+        notes: initialData.notes || '',
+        active: initialData.active !== false,
+      });
+      
+      if (initialData.materialId && !selectedMaterialId) {
+        onSelectMaterial(initialData.materialId);
+      }
+    }
+  }, [initialData, form, onSelectMaterial, selectedMaterialId]);
+
+  const handleSubmit = async (values: z.infer<typeof materialOfferSchema>) => {
+    setIsLoading(true);
+    
+    try {
+      onSubmit({
+        ...values,
+        materialId: selectedMaterialId || values.materialId,
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const categorizedMaterials = materials.reduce((acc: Record<string, Material[]>, material) => {
+    if (!acc[material.category]) {
+      acc[material.category] = [];
+    }
+    acc[material.category].push(material);
+    return acc;
+  }, {});
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+        <div className="space-y-4">
+          {selectedMaterialId === null ? (
+            <FormField
+              control={form.control}
+              name="materialId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Material</FormLabel>
+                  <Select
+                    onValueChange={(value) => {
+                      field.onChange(parseInt(value));
+                      onSelectMaterial(parseInt(value));
+                    }}
+                    value={field.value ? field.value.toString() : undefined}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Material auswählen" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {Object.entries(categorizedMaterials).map(([category, categoryMaterials]) => (
+                        <div key={category}>
+                          <div className="px-2 py-1.5 text-sm font-semibold bg-gray-100">
+                            {category}
+                          </div>
+                          {categoryMaterials.map((material) => (
+                            <SelectItem
+                              key={material.id}
+                              value={material.id.toString()}
+                              className="pl-4"
+                            >
+                              {material.name}
+                            </SelectItem>
+                          ))}
+                        </div>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : (
+            <div className="mb-4">
+              <label className="text-sm font-medium">Material</label>
+              <div className="mt-1">
+                <div className="text-base">
+                  {materials.find(m => m.id === selectedMaterialId)?.name || 'Unbekanntes Material'}
+                </div>
+                <div className="text-sm text-gray-500">
+                  {materials.find(m => m.id === selectedMaterialId)?.category || 'Keine Kategorie'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="price"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Preis (€/kg)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      {...field}
+                      value={field.value || ''}
+                      onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : 0)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="minQuantity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Mindestmenge (kg)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      {...field}
+                      value={field.value || ''}
+                      onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : 0)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="maxQuantity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Höchstmenge (kg) - Optional</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      {...field}
+                      value={field.value || ''}
+                      onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="active"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start space-x-3 space-y-0 p-4 border rounded-md">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel>Angebot aktiv</FormLabel>
+                    <p className="text-sm text-gray-500">
+                      Deaktivieren Sie das Angebot temporär, ohne es zu löschen
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <FormField
+            control={form.control}
+            name="notes"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Hinweise - Optional</FormLabel>
+                <FormControl>
+                  <Textarea
+                    {...field}
+                    value={field.value || ''}
+                    placeholder="Zusätzliche Informationen oder Bedingungen für dieses Material"
+                    rows={3}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-2">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
+            Abbrechen
+          </Button>
+          
+          <Button type="submit" disabled={isLoading || !selectedMaterialId}>
+            {isLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Speichern...
+              </>
+            ) : initialData ? 'Aktualisieren' : 'Hinzufügen'}
+          </Button>
+        </div>
+      </form>
+    </Form>
+  );
+} 

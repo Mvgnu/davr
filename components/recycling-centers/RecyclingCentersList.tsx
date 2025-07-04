@@ -25,7 +25,11 @@ import {
   Map
 } from 'lucide-react';
 import PaginationControls from '@/components/PaginationControls';
-import { RecyclingCenter } from '@/app/api/recycling-centers/route';
+import { RecyclingCenter } from '@/lib/api/recyclingCenters';
+
+// Define an extended type for display purposes, based on usage in the component
+// This should ideally match the actual return type of useRecyclingCenters
+type DisplayRecyclingCenter = RecyclingCenter;
 
 // Dynamically import the map component to avoid SSR issues with Leaflet
 const CenterMapPreview = dynamic(
@@ -109,8 +113,9 @@ const RecyclingCentersList: React.FC<RecyclingCentersListProps> = ({
   });
 
   // Function to get material badges
-  const getMaterialCount = (center: RecyclingCenter): { category: string, count: number }[] => {
+  const getMaterialCount = (center: DisplayRecyclingCenter): { category: string, count: number }[] => {
     // This is a placeholder - in a real app, you'd have this data
+    // Accessing center properties might need adjustment if logic changes
     return [
       { category: 'Metalle', count: Math.floor(Math.random() * 15) + 1 },
       { category: 'Papier', count: Math.floor(Math.random() * 10) + 1 },
@@ -331,16 +336,16 @@ const RecyclingCentersList: React.FC<RecyclingCentersListProps> = ({
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-gray-900">
               {pagination && (
-                <span>Zeige {centers.length} von {pagination.total} Recyclingcentern</span>
+                <span>Zeige {centers.length} von {pagination.totalItems} Recyclingcentern</span>
               )}
             </h2>
           </div>
           
           {viewMode === 'map' && showMapPreviews ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {sortedCenters.map((center) => (
+              {sortedCenters.map((center: DisplayRecyclingCenter) => (
                 <Link
-                  href={`/recycling-centers/${center.location.city.toLowerCase().replace(/\s+/g, '-')}/${center.slug}`}
+                  href={`/recycling-centers/${center.slug}`}
                   key={center.id}
                   className="group block h-full"
                 >
@@ -385,12 +390,12 @@ const RecyclingCentersList: React.FC<RecyclingCentersListProps> = ({
             </div>
           ) : viewMode === 'card' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {sortedCenters.map((center) => {
+              {sortedCenters.map((center: DisplayRecyclingCenter) => {
                 const materialCounts = getMaterialCount(center);
                 
                 return (
                   <Link
-                    href={`/recycling-centers/${center.location.city.toLowerCase().replace(/\s+/g, '-')}/${center.slug}`}
+                    href={`/recycling-centers/${center.slug}`}
                     key={center.id}
                     className="group block h-full"
                   >
@@ -465,12 +470,12 @@ const RecyclingCentersList: React.FC<RecyclingCentersListProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              {sortedCenters.map((center) => {
+              {sortedCenters.map((center: DisplayRecyclingCenter) => {
                 const materialCounts = getMaterialCount(center);
                 
                 return (
                   <Link
-                    href={`/recycling-centers/${center.location.city.toLowerCase().replace(/\s+/g, '-')}/${center.slug}`}
+                    href={`/recycling-centers/${center.slug}`}
                     key={center.id}
                     className="block group"
                   >

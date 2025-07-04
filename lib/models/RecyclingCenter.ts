@@ -230,13 +230,13 @@ RecyclingCenterSchema.index({ claimedBy: 1 });
 RecyclingCenterSchema.index({ city: 1, slug: 1 });
 
 // Create a slug before saving if it doesn't exist
-RecyclingCenterSchema.pre('save', function(next) {
+RecyclingCenterSchema.pre('save', function(this: IRecyclingCenter, next) {
   if (!this.slug) {
     this.slug = this.name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '') + 
-      '-' + this._id.toString().slice(-6);
+      '-' + (this._id as { toString(): string }).toString().slice(-6);
   }
   next();
 });
