@@ -41,15 +41,19 @@ model User {
   emailVerified    DateTime?
   password         String?
   image            String?
-  isAdmin          Boolean                @default(false)
+  role             UserRole               @default(USER)
+  isAdmin          Boolean                @default(false) // Deprecated: use role field
   created_at       DateTime               @default(now())
   updated_at       DateTime               @updatedAt
   accounts         Account[]
   listings         MarketplaceListing[]
   recyclingCenters RecyclingCenter[]
   claims           RecyclingCenterClaim[]
+  reviewedClaims   RecyclingCenterClaim[] @relation("ClaimReviewer")
   reviews          Review[]
   sessions         Session[]
+
+  @@index([role])
 }
 
 model VerificationToken {
@@ -91,19 +95,36 @@ model RecyclingCenter {
 }
 
 model Material {
-  id               String                 @id @default(cuid())
-  name             String                 @unique
+  id               String   @id @default(cuid())
+  name             String   @unique
   description      String?
-  slug             String                 @unique
+  slug             String   @unique
   parent_id        String?
-  created_at       DateTime               @default(now())
-  updated_at       DateTime               @updatedAt
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
   image_url        String?
-  journeyStepsJson Json?                  @default("[]")
-  listings         MarketplaceListing[]
-  parent           Material?              @relation("MaterialHierarchy", fields: [parent_id], references: [id])
-  children         Material[]             @relation("MaterialHierarchy")
-  offers           RecyclingCenterOffer[]
+  journeyStepsJson Json?    @default("[]")
+
+  // NEW FIELDS for enhanced UX
+  recyclability_percentage Int? // 0-100, how recyclable this material is
+  recycling_difficulty     RecyclingDifficulty? // EASY, MEDIUM, HARD
+  category_icon            String? // Icon identifier (e.g., "metal", "paper", "plastic")
+  environmental_impact     Json? // { co2_saved_per_kg, energy_saved_percentage, water_saved_liters }
+  preparation_tips         Json? // Array of tip objects: [{ title, description, icon }]
+  acceptance_rate          Int? // Percentage of centers that accept this (can be computed)
+  average_price_per_unit   Float? // Cached average from offers
+  price_unit               String? // e.g., "kg", "tonne", "unit"
+  fun_fact                 String? // Interesting fact about this material
+  annual_recycling_volume  Float? // Global or national recycling volume in tonnes/year
+
+  listings MarketplaceListing[]
+  parent   Material?              @relation("MaterialHierarchy", fields: [parent_id], references: [id])
+  children Material[]             @relation("MaterialHierarchy")
+  offers   RecyclingCenterOffer[]
+
+  @@index([recyclability_percentage])
+  @@index([recycling_difficulty])
+  @@index([category_icon])
 }
 
 model RecyclingCenterOffer {
@@ -148,7 +169,7 @@ model MarketplaceListing {
 model RecyclingCenterClaim {
   id                  String          @id @default(cuid())
   recycling_center_id String
-  user_id             String
+  user_id             String?
   name                String
   email               String
   phone               String?
@@ -157,14 +178,21 @@ model RecyclingCenterClaim {
   message             String
   status              String          @default("pending")
   rejection_reason    String?
+  documents_json      Json?
+  admin_response      String?
+  reviewed_by_id      String?
+  reviewed_at         DateTime?
+  account_created     Boolean         @default(false)
   created_at          DateTime        @default(now())
   updated_at          DateTime        @updatedAt
   recyclingCenter     RecyclingCenter @relation(fields: [recycling_center_id], references: [id], onDelete: Cascade)
-  user                User            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user                User?           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  reviewed_by         User?           @relation("ClaimReviewer", fields: [reviewed_by_id], references: [id], onDelete: SetNull)
 
   @@index([recycling_center_id])
   @@index([user_id])
   @@index([status])
+  @@index([reviewed_by_id])
 }
 
 model BlogPost {
@@ -216,6 +244,21 @@ model Review {
   @@index([centerId])
 }
 
+model Message {
+  id              String   @id @default(cuid())
+  senderUserId    String?
+  senderName      String?
+  senderEmail     String?
+  senderPhone     String?
+  recipientUserId String?
+  centerId        String?
+  subject         String
+  content         String
+  status          String   @default("new")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+}
+
 enum ListingType {
   BUY
   SELL
@@ -243,4 +286,16 @@ enum VerificationStatus {
   PENDING
   VERIFIED
   REJECTED
+}
+
+enum RecyclingDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum UserRole {
+  USER
+  CENTER_OWNER
+  ADMIN
 }

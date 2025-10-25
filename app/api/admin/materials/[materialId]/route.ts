@@ -3,14 +3,23 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db/prisma';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 
 // Zod schema for validating PATCH request body
 const updateMaterialSchema = z.object({
     name: z.string().min(1, 'Name is required').optional(),
     description: z.string().optional(),
-    category: z.string().min(1, 'Category is required').optional(),
-    // Optional: Add parentMaterialId validation if needed
-    // parentMaterialId: z.string().cuid().optional().nullable(),
+    recyclability_percentage: z.number().min(0).max(100).nullable().optional(),
+    recycling_difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).nullable().optional(),
+    category_icon: z.string().max(50).optional(),
+    environmental_impact: z.record(z.unknown()).nullable().optional(),
+    preparation_tips: z.array(z.record(z.string())).nullable().optional(),
+    acceptance_rate: z.number().min(0).max(100).nullable().optional(),
+    average_price_per_unit: z.number().nullable().optional(),
+    price_unit: z.string().max(20).optional(),
+    fun_fact: z.string().max(200).optional(),
+    annual_recycling_volume: z.number().nullable().optional(),
+    parent_id: z.string().cuid().optional().nullable(),
 });
 
 // GET handler to retrieve a single material by ID (Admin Only)
@@ -113,9 +122,26 @@ export async function PATCH(
         }
 
         // 3. Update the Material
+        const { parent_id, environmental_impact, preparation_tips, ...updateDataWithoutParentId } = updateData;
+        
+        // Handle JSON fields properly - convert null to Prisma.DbNull
+        const jsonData: any = {};
+        if ('environmental_impact' in updateData) {
+          jsonData.environmental_impact = environmental_impact === null ? Prisma.DbNull : environmental_impact;
+        }
+        if ('preparation_tips' in updateData) {
+          jsonData.preparation_tips = preparation_tips === null ? Prisma.DbNull : preparation_tips;
+        }
+        
         const updatedMaterial = await prisma.material.update({
             where: { id: materialId },
-            data: updateData,
+            data: {
+                ...updateDataWithoutParentId,
+                ...jsonData,
+                parent: parent_id
+                    ? { connect: { id: parent_id } }
+                    : { disconnect: true },
+            },
         });
 
         console.log(`Admin ${session.user.email} updated material ${updatedMaterial.id}`);

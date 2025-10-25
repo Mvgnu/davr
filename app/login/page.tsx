@@ -7,15 +7,14 @@ function LoginPageContent() {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen py-12 bg-gray-50 sm:px-6 lg:px-8">
       <div className="w-full max-w-md px-8 py-10 bg-white rounded-lg shadow-md">
-        <h2 className="mb-6 text-3xl font-extrabold text-center text-gray-900">
-          Sign in to your account
-        </h2>
+        <h2 className="mb-2 text-3xl font-extrabold text-center text-gray-900">Anmelden</h2>
+        <p className="mb-6 text-center text-gray-600">Willkommen zurück. Bitte melden Sie sich an.</p>
         <LoginForm />
         <div className="mt-6 text-sm text-center">
           <p className="text-gray-600">
-            Don't have an account?
+            Kein Konto?
             <Link href="/register" className="ml-1 font-medium text-indigo-600 hover:text-indigo-500">
-              Register
+              Jetzt registrieren
             </Link>
           </p>
           {/* Add link to password reset if implemented */}

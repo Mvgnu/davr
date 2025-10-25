@@ -29,7 +29,9 @@ dist-ssr
 
 .env
 
-/.next
+/.next/*
+
+
 
 /.output.md
 

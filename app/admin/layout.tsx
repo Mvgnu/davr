@@ -4,7 +4,7 @@ import React from 'react';
 import { useSession } from 'next-auth/react';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { ShieldCheck, LayoutDashboard, Users, ShoppingBag, Building2, Package } from 'lucide-react'; // Icons
+import { ShieldCheck, LayoutDashboard, Users, ShoppingBag, Building2, Package, MessageSquare, FileText, Wrench, Star } from 'lucide-react'; // Icons
 
 // Extend session type to include our custom isAdmin flag
 // You might need to adjust this based on how your session is structured
@@ -78,6 +78,26 @@ export default function AdminLayout({
                     <Link href="/admin/materials" className="flex items-center space-x-2 px-3 py-2 rounded hover:bg-gray-700">
                          <Package className="w-5 h-5" />
                          <span>Materials</span>
+                    </Link>
+                    <Link href="/admin/blog" className="flex items-center space-x-2 px-3 py-2 rounded hover:bg-gray-700">
+                         <FileText className="w-5 h-5" />
+                         <span>Blog</span>
+                    </Link>
+                    <Link href="/admin/claims" className="flex items-center space-x-2 px-3 py-2 rounded hover:bg-gray-700">
+                         <Wrench className="w-5 h-5" />
+                         <span>Claims</span>
+                    </Link>
+                    <Link href="/admin/analytics" className="flex items-center space-x-2 px-3 py-2 rounded hover:bg-gray-700">
+                         <Star className="w-5 h-5" />
+                         <span>Analytics</span>
+                    </Link>
+                    <Link href="/admin/messages" className="flex items-center space-x-2 px-3 py-2 rounded hover:bg-gray-700">
+                         <MessageSquare className="w-5 h-5" />
+                         <span>Messages</span>
+                    </Link>
+                    <Link href="/admin/settings" className="flex items-center space-x-2 px-3 py-2 rounded hover:bg-gray-700">
+                         <Wrench className="w-5 h-5" />
+                         <span>Settings</span>
                     </Link>
                     {/* Add more admin links here as needed */}
                 </nav>

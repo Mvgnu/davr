@@ -13,7 +13,7 @@ import { Pagination } from "@/components/ui/pagination"; // Use standard paginat
 interface ClientClaim {
   id: string;
   recyclingCenterId: string;
-  userId: string;
+  userId: string | null;
   name: string;
   email: string;
   phone: string | null;

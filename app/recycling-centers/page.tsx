@@ -10,6 +10,7 @@ import { prisma } from '@/lib/db/prisma';
 import { Prisma } from '@prisma/client';
 import PaginationControls from '@/components/ui/PaginationControls';
 import RecyclingCentersClientContent from './RecyclingCentersClientContent'; // Import the client component
+import { calculateDistance } from '@/lib/utils/distance';
 
 // Proper metadata configuration using Next.js metadata API
 export const metadata: Metadata = {
@@ -46,6 +47,10 @@ type CenterForClient = {
   slug?: string | null;
   website?: string | null;
   verification_status?: 'pending' | 'verified' | 'rejected' | null; // Keep if needed by card/schema exists
+  distance?: number | null;
+  offers?: { price_per_unit: number | null; unit: string | null; material: { name: string } }[];
+  is_open_now?: boolean;
+  today_hours?: string | null;
 };
 
 // Define type for searchParams prop
@@ -63,10 +68,16 @@ FiltersWrapper.displayName = 'FiltersWrapper';
 async function fetchInitialData(searchParams: PageProps['searchParams']) {
   const city = typeof searchParams.city === 'string' ? searchParams.city : undefined;
   const materialName = typeof searchParams.material === 'string' ? searchParams.material : undefined;
+  const materialsParam = typeof searchParams.materials === 'string' ? searchParams.materials : undefined;
+  const selectedMaterials = materialsParam ? materialsParam.split(',').filter(Boolean) : [];
   const searchQuery = typeof searchParams.search === 'string' ? searchParams.search : undefined;
   const page = typeof searchParams.page === 'string' ? parseInt(searchParams.page, 10) : 1;
   const limit = typeof searchParams.limit === 'string' ? parseInt(searchParams.limit, 10) : 10;
   const skip = (page - 1) * limit;
+  const openNow = searchParams.openNow === 'true';
+  const lat = searchParams.lat ? parseFloat(String(searchParams.lat)) : undefined;
+  const lng = searchParams.lng ? parseFloat(String(searchParams.lng)) : undefined;
+  const maxDistance = searchParams.maxDistance ? parseFloat(String(searchParams.maxDistance)) : undefined;
 
   const whereClause: Prisma.RecyclingCenterWhereInput = {};
   const andConditions: Prisma.RecyclingCenterWhereInput[] = [];
@@ -94,6 +105,16 @@ async function fetchInitialData(searchParams: PageProps['searchParams']) {
       }
     });
   }
+  if (selectedMaterials.length > 0) {
+    // Require center to accept ALL selected materials
+    selectedMaterials.forEach((m) => {
+      andConditions.push({
+        offers: {
+          some: { material: { name: { contains: m, mode: 'insensitive' } } },
+        },
+      });
+    });
+  }
 
   if (andConditions.length > 0) {
     whereClause.AND = andConditions;
@@ -113,6 +134,16 @@ async function fetchInitialData(searchParams: PageProps['searchParams']) {
           slug: true,
           website: true,
           verification_status: true,
+          latitude: true,
+          longitude: true,
+          working_hours: true,
+          offers: {
+            select: {
+              price_per_unit: true,
+              unit: true,
+              material: { select: { name: true } },
+            },
+          },
         },
         orderBy: { name: 'asc' },
         skip: skip,
@@ -120,13 +151,56 @@ async function fetchInitialData(searchParams: PageProps['searchParams']) {
       })
     ]);
 
-    const typedCenters: CenterForClient[] = centers.map(center => ({
-        ...center,
-        verification_status: center.verification_status as 'pending' | 'verified' | 'rejected' | null
-    }));
+    const now = new Date();
+    const dayNames = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+    const today = dayNames[now.getDay()];
+    const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+    const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    let processed: CenterForClient[] = centers.map((c) => {
+      let distance: number | null = null;
+      if (typeof lat === 'number' && typeof lng === 'number' && c.latitude && c.longitude) {
+        distance = calculateDistance(lat, lng, c.latitude, c.longitude);
+      }
+      const todays = (c.working_hours || []).filter((w: any) => w.day_of_week === today);
+      const openEntry = todays.find((w: any) => !w.is_closed && w.open_time <= timeStr && timeStr <= w.close_time);
+      const todayHours = todays.length > 0 ? (todays[0].is_closed ? 'Geschlossen' : `${todays[0].open_time}–${todays[0].close_time}`) : null;
+
+      // Filter offers to selected materials or single material if provided
+      let offers = c.offers || [];
+      if (selectedMaterials.length > 0) {
+        offers = offers.filter((o) => selectedMaterials.some((m) => o.material.name.toLowerCase().includes(m.toLowerCase())));
+      } else if (materialName) {
+        offers = offers.filter((o) => o.material.name.toLowerCase().includes(materialName.toLowerCase()));
+      }
+
+      return {
+        id: c.id,
+        name: c.name,
+        address_street: c.address_street,
+        city: c.city,
+        postal_code: c.postal_code,
+        slug: c.slug,
+        website: c.website,
+        verification_status: c.verification_status as 'pending' | 'verified' | 'rejected' | null,
+        distance,
+        offers,
+        is_open_now: Boolean(openEntry),
+        today_hours: todayHours,
+      };
+    });
+
+    if (typeof maxDistance === 'number' && typeof lat === 'number' && typeof lng === 'number') {
+      processed = processed.filter((c) => typeof c.distance === 'number' && (c.distance as number) <= maxDistance);
+      processed.sort((a, b) => (a.distance || Infinity) - (b.distance || Infinity));
+    }
+
+    if (openNow) {
+      processed = processed.filter((c) => c.is_open_now);
+    }
 
     return {
-        centers: typedCenters,
+        centers: processed,
         totalCenters,
         currentPage: page,
         limit,

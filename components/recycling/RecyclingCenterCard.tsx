@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { MapPin, ExternalLink, ShieldCheck, ShieldAlert, ShieldQuestion, ArrowRight } from 'lucide-react';
+import { MapPin, ExternalLink, ShieldCheck, ShieldAlert, ShieldQuestion, ArrowRight, Clock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from "@/components/ui/badge";
 
@@ -20,6 +20,7 @@ type DisplayRecyclingCenter = {
     image_url?: string | null;
     rating?: number | null;
     distance?: number | null;
+  offers?: { price_per_unit: number | null; unit: string | null; material: { name: string } }[];
 };
 
 type RecyclingCenterCardProps = {
@@ -42,7 +43,7 @@ const getStatusProps = (status: 'pending' | 'verified' | 'rejected' | null | und
 
 export default function RecyclingCenterCard({ center }: RecyclingCenterCardProps) {
   const { variant: statusVariant, Icon: StatusIcon, text: statusText } = getStatusProps(center.verification_status);
-  const placeholderImage = '/images/placeholder/recycling-center.jpg';
+  const placeholderImage = '/images/map-placeholder.svg';
 
   return (
     <Link 
@@ -78,6 +79,17 @@ export default function RecyclingCenterCard({ center }: RecyclingCenterCardProps
                 <h3 className="mb-2 text-lg font-semibold text-foreground group-hover:text-primary transition-colors duration-200 line-clamp-2">
                     {center.name}
                 </h3>
+              {/* If materials were filtered, show price rows for each selected material */}
+              {Array.isArray(center.offers) && center.offers.length > 0 && (
+                <div className="text-sm mb-2 text-foreground space-y-1">
+                  {center.offers.map((o, idx) => (
+                    <div key={idx} className="flex items-center justify-between">
+                      <span className="text-muted-foreground">{o.material.name}</span>
+                      <span>{o.price_per_unit != null ? `${o.price_per_unit}${o.unit ? ` / ${o.unit}` : ''}` : 'Keine Angabe'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
                 
                 <div className="flex items-start mb-2 text-sm text-muted-foreground">
                     <MapPin className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0 text-accent/80" />
@@ -87,6 +99,17 @@ export default function RecyclingCenterCard({ center }: RecyclingCenterCardProps
                         {center.city || 'Standort nicht angegeben'}
                     </span>
                 </div>
+
+                {/* Open now + hours preview */}
+                {(center as any).today_hours && (
+                  <div className="flex items-center text-xs mb-2">
+                    <Clock className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                    <span className="mr-2 text-muted-foreground">Heute: {(center as any).today_hours}</span>
+                    {(center as any).is_open_now && (
+                      <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-300">Geöffnet</Badge>
+                    )}
+                  </div>
+                )}
 
                 {/* Rating could be added here if data is available */}
                 {/* <div className="flex items-center mt-2"> ... rating logic ... </div> */}

@@ -1,160 +1,181 @@
 import React from 'react';
-import Link from 'next/link';
-import Image from 'next/image';
-import { prisma } from '@/lib/db/prisma'; // Use direct Prisma access
-import PaginationControls from '@/components/ui/PaginationControls'; // Assuming this path
-import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { prisma } from '@/lib/db/prisma';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, User, Tag as TagIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
 
-const POSTS_PER_PAGE = 9;
+interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string;
+  author_name: string | null;
+  category: string | null;
+  published_at: Date | null;
+  created_at: Date;
+  status: string;
+  image_url: string | null;
+}
 
-// Define the structure of a blog post summary
-// Based on the select clause in the API route
-type BlogPostSummary = {
-    id: string;
-    title: string;
-    slug: string;
-    excerpt: string | null;
-    image_url: string | null;
-    published_at: Date | null;
-    author_name: string | null;
-    category: string | null;
-    featured: boolean;
-};
-
-// Helper function to fetch blog posts (can be moved to lib)
-async function getPublishedBlogPosts(page: number, limit: number): Promise<{ posts: BlogPostSummary[], totalPages: number, currentPage: number }> {
+async function getBlogPosts(page: number = 1, limit: number = 10) {
+  try {
     const skip = (page - 1) * limit;
-    const now = new Date();
-    const whereClause = {
-        status: 'published',
-        published_at: { lte: now },
+
+    const [posts, totalPosts] = await prisma.$transaction([
+      prisma.blogPost.findMany({
+        where: { 
+          status: 'published'
+        },
+        skip: skip,
+        take: limit,
+        orderBy: {
+          published_at: 'desc',
+          created_at: 'desc',
+        },
+      }),
+      prisma.blogPost.count({
+        where: { 
+          status: 'published'
+        },
+      }),
+    ]);
+
+    const totalPages = Math.ceil(totalPosts / limit);
+
+    return {
+      posts: posts.map(post => ({
+        id: post.id,
+        title: post.title,
+        slug: post.slug,
+        excerpt: post.excerpt,
+        author_name: post.author_name,
+        category: post.category,
+        published_at: post.published_at,
+        created_at: post.created_at,
+        status: post.status,
+        image_url: post.image_url,
+      })),
+      pagination: {
+        currentPage: page,
+        totalPages,
+        pageSize: limit,
+        totalItems: totalPosts,
+      }
     };
-
-    try {
-        const totalPosts = await prisma.blogPost.count({ where: whereClause });
-        const posts = await prisma.blogPost.findMany({
-            where: whereClause,
-            select: {
-                id: true,
-                title: true,
-                slug: true,
-                excerpt: true,
-                image_url: true,
-                published_at: true,
-                author_name: true,
-                category: true,
-                featured: true,
-            },
-            orderBy: { published_at: 'desc' },
-            skip: skip,
-            take: limit,
-        });
-
-        const totalPages = Math.ceil(totalPosts / limit);
-        // Ensure published_at is serialized correctly if needed, but Prisma handles Date objects
-        // const serializedPosts = posts.map(post => ({ ...post, published_at: post.published_at?.toISOString() }));
-        
-        return { posts, totalPages, currentPage: page };
-    } catch (error) {
-        console.error("Error fetching blog posts:", error);
-        return { posts: [], totalPages: 0, currentPage: page }; // Return empty on error
-    }
+  } catch (error) {
+    console.error('Error fetching blog posts:', error);
+    return {
+      posts: [],
+      pagination: {
+        currentPage: 1,
+        totalPages: 1,
+        pageSize: 10,
+        totalItems: 0,
+      }
+    };
+  }
 }
 
-// --- Blog Card Component (Colocated for simplicity) ---
-interface BlogCardProps {
-    post: BlogPostSummary;
-}
+export default async function BlogPage({ searchParams }: { searchParams?: { page?: string } }) {
+  const page = parseInt(searchParams?.page || '1', 10);
+  const { posts, pagination } = await getBlogPosts(page, 10);
 
-function BlogCard({ post }: BlogCardProps) {
-    return (
-        <Link href={`/blog/${post.slug}`} className="group block h-full">
-            <Card className="flex flex-col h-full overflow-hidden border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-300 ease-in-out">
-                <div className="relative w-full h-48 bg-muted overflow-hidden">
-                    {post.image_url ? (
-                        <Image 
-                            src={post.image_url}
-                            alt={post.title}
-                            fill
-                            style={{ objectFit: 'cover' }}
-                            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                            className="transition-transform duration-300 ease-in-out group-hover:scale-105"
-                        />
-                    ) : (
-                         <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-muted to-secondary/50">
-                            {/* Placeholder icon or gradient */}
-                        </div>
-                    )}
-                </div>
-                <CardHeader>
-                    {post.category && (
-                        <Badge variant="outline" className="mb-2 self-start">{post.category}</Badge>
-                    )}
-                    <CardTitle className="text-xl font-semibold group-hover:text-primary transition-colors duration-200 line-clamp-2">{post.title}</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-grow">
-                    {post.excerpt && (
-                        <p className="text-muted-foreground text-sm line-clamp-3">{post.excerpt}</p>
-                    )}
-                </CardContent>
-                <CardFooter className="text-xs text-muted-foreground border-t border-border/60 pt-3 flex flex-col items-start gap-1.5">
-                     <div className="flex items-center gap-1.5">
-                         <User className="h-3.5 w-3.5" />
-                         <span>{post.author_name || 'Unbekannt'}</span>
-                     </div>
-                     {post.published_at && (
-                        <div className="flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5" />
-                            <time dateTime={post.published_at.toISOString()}>
-                                {format(post.published_at, 'PPP', { locale: de })}
-                            </time>
-                        </div>
-                     )}
-                </CardFooter>
-            </Card>
-        </Link>
-    );
-}
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold tracking-tight mb-4">Unser Blog</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+          Erfahren Sie mehr über Aluminium-Recycling, Nachhaltigkeit und aktuelle Neuigkeiten aus der Branche.
+        </p>
+      </div>
 
-// --- Main Blog Page Component ---
-interface BlogPageProps {
-    searchParams?: { [key: string]: string | string[] | undefined };
-}
-
-export default async function BlogPage({ searchParams }: BlogPageProps) {
-    const page = parseInt(searchParams?.page as string || '1', 10);
-    const validatedPage = Math.max(1, isNaN(page) ? 1 : page);
-
-    const { posts, totalPages, currentPage } = await getPublishedBlogPosts(validatedPage, POSTS_PER_PAGE);
-
-    return (
-        <div className="container mx-auto px-4 py-12">
-            <h1 className="text-3xl md:text-4xl font-bold mb-8">Blog</h1>
-            
-            {posts.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-                    {posts.map((post) => (
-                        <BlogCard key={post.id} post={post} />
-                    ))}
-                </div>
-            ) : (
-                <p className="text-center text-muted-foreground py-10">Keine Blogbeiträge gefunden.</p>
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-                <div className="flex justify-center">
-                     <PaginationControls 
-                        currentPage={currentPage}
-                        totalPages={totalPages}
-                        baseUrl="/blog" 
-                    />
-                </div>
-            )}
+      {posts.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">Keine Blog-Beiträge gefunden.</p>
         </div>
-    );
-} 
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {posts.map((post) => (
+            <Card key={post.id} className="flex flex-col overflow-hidden hover:shadow-lg transition-shadow">
+              {post.image_url && (
+                <div className="aspect-video overflow-hidden">
+                  <img 
+                    src={post.image_url} 
+                    alt={post.title} 
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+              
+              <CardHeader className="flex-grow">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  {post.category && (
+                    <Badge variant="secondary">{post.category}</Badge>
+                  )}
+                  <time 
+                    dateTime={post.published_at?.toISOString() || post.created_at.toISOString()}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {format(post.published_at || post.created_at, 'PPP', { locale: de })}
+                  </time>
+                </div>
+                
+                <CardTitle className="text-xl mb-2 line-clamp-2">
+                  {post.title}
+                </CardTitle>
+                
+                {post.excerpt && (
+                  <CardDescription className="line-clamp-3">
+                    {post.excerpt}
+                  </CardDescription>
+                )}
+              </CardHeader>
+              
+              <CardContent>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href={`/blog/${post.slug}`}>
+                    Weiterlesen
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between mt-12">
+          <Button
+            variant="outline"
+            disabled={page === 1}
+            asChild
+          >
+            <Link href={`/blog?page=${page - 1}`}>
+              Vorherige
+            </Link>
+          </Button>
+          
+          <div className="text-sm text-muted-foreground">
+            Seite {page} von {pagination.totalPages}
+          </div>
+          
+          <Button
+            variant="outline"
+            disabled={page === pagination.totalPages}
+            asChild
+          >
+            <Link href={`/blog?page=${page + 1}`}>
+              Nächste
+            </Link>
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}

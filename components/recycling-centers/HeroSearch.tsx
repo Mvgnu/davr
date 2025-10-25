@@ -2,17 +2,17 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  MapPin, 
-  Search, 
-  Recycle, 
-  ArrowRight, 
-  Info, 
-  X, 
-  Filter, 
-  List, 
-  Map as MapIcon, 
-  Clock, 
+import {
+  MapPin,
+  Search,
+  Recycle,
+  ArrowRight,
+  Info,
+  X,
+  Filter,
+  List,
+  Map as MapIcon,
+  Clock,
   Calendar,
   CrosshairIcon,
   ChevronDown
@@ -20,6 +20,7 @@ import {
 import { Material, RecyclingStats, groupMaterialsByCategory } from '@/lib/data/recycling';
 import { AnimatePresence, motion } from 'framer-motion';
 import { fetchCities } from '@/lib/api/recyclingCenters'; // Use the real API
+import { useSearch } from '@/components/SearchProvider';
 
 // We remove the hardcoded GERMAN_CITIES array and replace with database data
 interface HeroSearchProps {
@@ -40,6 +41,7 @@ const HeroSearch: React.FC<HeroSearchProps> = ({
   cities = [] // Use cities from database props
 }) => {
   const router = useRouter();
+  const searchContext = useSearch();
   const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [city, setCity] = useState(initialCity);
   const [material, setMaterial] = useState(initialMaterial);
@@ -89,12 +91,16 @@ const HeroSearch: React.FC<HeroSearchProps> = ({
     };
   }, []);
   
-  // Function to get user's location
+  // Function to get user location and save to SearchProvider
   const getUserLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           const { latitude, longitude } = position.coords;
+
+          // Save coordinates to SearchProvider immediately
+          searchContext.setLocation({ lat: latitude, lng: longitude });
+
           try {
             // Reverse geocoding to get city name
             const response = await fetch(
@@ -106,6 +112,9 @@ const HeroSearch: React.FC<HeroSearchProps> = ({
             } else if (data.address && data.address.town) {
               setCity(data.address.town);
             }
+
+            // Apply filters to update URL with location
+            searchContext.applyFilters();
           } catch (error) {
             console.error("Error getting location:", error);
             alert("Fehler beim Abrufen Ihres Standorts. Bitte geben Sie Ihre Stadt manuell ein.");

@@ -2,126 +2,244 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db/prisma';
-// Keep general Prisma import for other potentially used types/client
-import { Prisma } from '@prisma/client'; 
-import { z } from 'zod';
-import { ListingType, ListingStatus } from '@prisma/client';
+import { Prisma, ListingType, ListingStatus } from '@prisma/client';
+import {
+  marketplaceQuerySchema,
+  createListingSchema,
+  validateRequest,
+  formatValidationErrors,
+} from '@/lib/api/validation';
 
-// --- GET Handler: Fetch listings with Filtering & Pagination ---
+/**
+ * GET handler: Fetch marketplace listings with comprehensive filtering & pagination
+ */
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
-  
-  const page = parseInt(searchParams.get('page') || '1', 10);
-  const limit = parseInt(searchParams.get('limit') || '12', 10);
-  const validatedPage = Math.max(1, isNaN(page) ? 1 : page);
-  const validatedLimit = Math.max(1, Math.min(50, isNaN(limit) ? 12 : limit));
-  const skip = (validatedPage - 1) * validatedLimit;
+  // Parse and validate query parameters
+  const searchParams = Object.fromEntries(request.nextUrl.searchParams);
+  const validation = validateRequest(marketplaceQuerySchema, searchParams);
 
-  const searchQuery = searchParams.get('search');
-  const materialId = searchParams.get('materialId');
-  const locationQuery = searchParams.get('location');
+  if (!validation.success) {
+    return NextResponse.json(
+      {
+        error: 'VALIDATION_ERROR',
+        message: 'Ungültige Anfrageparameter',
+        details: formatValidationErrors(validation.error),
+      },
+      { status: 400 }
+    );
+  }
+
+  const {
+    page,
+    limit,
+    search,
+    materialId,
+    location,
+    type,
+    status,
+    sellerId,
+    minPrice,
+    maxPrice,
+  } = validation.data;
 
   try {
-    // +++ START DEBUGGING BLOCK +++
-    console.log('[DEBUG] Attempting to fetch ANY single listing...');
-    const anyListing = await prisma.marketplaceListing.findFirst({
-      include: { seller: true, material: true } // Include relations for context
-    });
-    console.log('[DEBUG] Result of findFirst:', anyListing);
-    // +++ END DEBUGGING BLOCK +++
+    // Build where clause dynamically with proper typing
+    const whereClause: Prisma.MarketplaceListingWhereInput = {};
 
-    // Reverting to 'any' due to persistent Prisma type generation issues
-    const whereClause: any = {
-      // status: 'ACTIVE', // Keep commented out for now
-    };
-
-    if (searchQuery) {
+    // Search filter
+    if (search) {
       whereClause.OR = [
-        { title: { contains: searchQuery, mode: 'insensitive' } },
-        { description: { contains: searchQuery, mode: 'insensitive' } },
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
       ];
     }
 
-    if (materialId && z.string().cuid().safeParse(materialId).success) {
+    // Material filter
+    if (materialId) {
       whereClause.material_id = materialId;
     }
 
-    if (locationQuery) {
-      whereClause.location = { contains: locationQuery, mode: 'insensitive' };
+    // Location filter
+    if (location) {
+      whereClause.location = { contains: location, mode: 'insensitive' };
+    }
+    
+    // Distance filter would go here - requires location data for listings
+    // For now, we'll just log that distance filter was requested
+    // if (maxDistance) {
+    //   console.log(`Distance filter requested: ${maxDistance}km, but no location data available for listings`);
+    //   // In a full implementation, this would filter based on listing location vs user location
+    // }
+
+    // Type filter (BUY/SELL)
+    if (type) {
+      whereClause.type = type;
     }
 
-    // Fetch total count matching the where clause
+    // Status filter
+    if (status) {
+      whereClause.status = status;
+    } else {
+      // Default to ACTIVE listings for public view
+      // Admins will be able to see all statuses through their special endpoint
+      whereClause.status = ListingStatus.ACTIVE;
+    }
+
+    // Seller filter
+    if (sellerId) {
+      whereClause.seller_id = sellerId;
+    }
+
+    // Price range filter (note: requires price field in schema)
+    // This is a placeholder for when price fields are added
+    // if (minPrice || maxPrice) {
+    //   whereClause.price = {};
+    //   if (minPrice) whereClause.price.gte = minPrice;
+    //   if (maxPrice) whereClause.price.lte = maxPrice;
+    // }
+
+    // Count total matching listings
     const totalListings = await prisma.marketplaceListing.count({
-      where: whereClause, 
+      where: whereClause,
     });
 
-    // Fetch paginated & filtered listings
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Fetch paginated and filtered listings with seller info
     const listings = await prisma.marketplaceListing.findMany({
-      where: whereClause, 
+      where: whereClause,
       include: {
-        material: { select: { name: true } },
-        seller: { select: { id: true, name: true } } 
+        material: { select: { name: true, slug: true } },
+        seller: { 
+          select: { 
+            id: true, 
+            name: true,
+            created_at: true // To calculate how long they've been a member
+          } 
+        },
       },
       orderBy: {
-        created_at: 'desc'
+        created_at: 'desc',
       },
-      skip: skip,
-      take: validatedLimit,
+      skip,
+      take: limit,
     });
 
-    const totalPages = Math.ceil(totalListings / validatedLimit);
+    // Get all unique seller IDs to fetch their stats efficiently
+    const uniqueSellerIds = new Set(listings.map(l => l.seller_id));
+    const sellerIds = Array.from(uniqueSellerIds);
+    
+    // Fetch active listing counts for all sellers in one query
+    const activeListingCounts = await prisma.$queryRaw<Array<{ 
+      seller_id: string; 
+      active_count: number 
+    }>>`
+      SELECT 
+        seller_id,
+        COUNT(*) as active_count
+      FROM "MarketplaceListing" 
+      WHERE seller_id IN (${Prisma.join(sellerIds)}) 
+        AND status = 'ACTIVE'
+      GROUP BY seller_id
+    `;
 
-    // Return the ACTUAL data, not the debug data
+    // Create a map from sellerId to active count
+    const activeCountMap = new Map(activeListingCounts.map(count => [count.seller_id, Number(count.active_count)]));
+    
+    // Enhance listings with seller metrics (in development, we'll add basic metrics)
+    const enhancedListings = listings.map(listing => {
+      return {
+        ...listing,
+        seller: {
+          ...listing.seller,
+          // For now, we'll use a basic rating calculation
+          // In production, this would come from actual user reviews
+          rating: 0, // Placeholder - would come from calculateUserRating function
+          reviewCount: 0, // Placeholder - would come from actual reviews
+          // Calculate how long they've been a member
+          memberSince: listing.seller?.created_at ? 
+            new Date(listing.seller.created_at).getFullYear() : null,
+          // Get count of their active listings from the pre-fetched data
+          totalActiveListings: activeCountMap.get(listing.seller_id) || 0
+        }
+      };
+    });
+
+    // Calculate pagination metadata
+    const totalPages = Math.ceil(totalListings / limit);
+
     return NextResponse.json({
-      listings, // Return the potentially empty array as before
+      listings,
       pagination: {
-        currentPage: validatedPage,
+        currentPage: page,
         totalPages,
         totalListings,
-        limit: validatedLimit,
-      }
+        limit,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
     });
-
   } catch (error) {
-    // Simplified error handling for GET
     console.error('[GET Marketplace Listings Error]', error);
     return NextResponse.json(
-      { error: 'Failed to fetch marketplace listings' },
+      {
+        error: 'SERVER_ERROR',
+        message: 'Fehler beim Abrufen der Marktplatz-Angebote',
+        details: process.env.NODE_ENV === 'development' ? String(error) : undefined,
+      },
       { status: 500 }
     );
   }
 }
 
-// --- POST Handler: Create a new listing --- 
-
-const listingSchema = z.object({
-  title: z.string().min(3, 'Title must be at least 3 characters long').max(100),
-  description: z.string().max(1000).optional(),
-  quantity: z.number().positive().optional().nullable(),
-  unit: z.string().max(20).optional().nullable(),
-  location: z.string().max(100).optional().nullable(),
-  material_id: z.string().cuid().optional().nullable(),
-  type: z.nativeEnum(ListingType),
-  imageUrl: z.string().url().optional().nullable(),
-});
-
+/**
+ * POST handler: Create a new marketplace listing
+ */
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      {
+        error: 'UNAUTHORIZED',
+        message: 'Anmeldung erforderlich',
+      },
+      { status: 401 }
+    );
   }
 
   try {
     const rawData = await request.json();
-    
+
     // Validate the incoming data
-    const validationResult = listingSchema.safeParse(rawData);
-    if (!validationResult.success) {
-        return NextResponse.json({ error: 'Invalid input data', details: validationResult.error.flatten() }, { status: 400 });
+    const validation = validateRequest(createListingSchema, rawData);
+
+    if (!validation.success) {
+      return NextResponse.json(
+        {
+          error: 'VALIDATION_ERROR',
+          message: 'Ungültige Eingabedaten',
+          details: formatValidationErrors(validation.error),
+        },
+        { status: 400 }
+      );
     }
-    
-    const data = validationResult.data;
+
+    const data = validation.data;
+
+    // Check if user has previously published listings
+    const hasPreviousPublishedListings = await prisma.marketplaceListing.count({
+      where: {
+        seller_id: session.user.id,
+        status: { in: [ListingStatus.ACTIVE, ListingStatus.INACTIVE] }
+      }
+    });
+
+    // Set status based on previous activity - new users get PENDING, returning users get ACTIVE
+    const listingStatus = hasPreviousPublishedListings > 0 
+      ? ListingStatus.ACTIVE 
+      : ListingStatus.PENDING;
 
     // Create the listing in the database
     const newListing = await prisma.marketplaceListing.create({
@@ -134,20 +252,48 @@ export async function POST(request: NextRequest) {
         seller_id: session.user.id,
         material_id: data.material_id,
         type: data.type,
-        status: ListingStatus.ACTIVE,
+        status: listingStatus,
         image_url: data.imageUrl,
+      },
+      include: {
+        material: { select: { name: true, slug: true } },
+        seller: { select: { id: true, name: true } },
       },
     });
 
     return NextResponse.json(newListing, { status: 201 });
-
   } catch (error) {
     console.error('[Marketplace Listing POST Error]', error);
-    if (error instanceof z.ZodError) {
-        // This should be caught by safeParse, but as a fallback
-        return NextResponse.json({ error: 'Invalid data format.', details: error.errors }, { status: 400 });
+
+    // Handle Prisma errors
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        return NextResponse.json(
+          {
+            error: 'DUPLICATE_ERROR',
+            message: 'Ein Angebot mit diesen Daten existiert bereits',
+          },
+          { status: 409 }
+        );
+      }
+      if (error.code === 'P2003') {
+        return NextResponse.json(
+          {
+            error: 'REFERENCE_ERROR',
+            message: 'Ungültige Material-ID oder Benutzer-ID',
+          },
+          { status: 400 }
+        );
+      }
     }
-    // Handle potential Prisma errors, like unique constraint violations if needed
-    return NextResponse.json({ error: 'Failed to create listing' }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        error: 'SERVER_ERROR',
+        message: 'Fehler beim Erstellen des Angebots',
+        details: process.env.NODE_ENV === 'development' ? String(error) : undefined,
+      },
+      { status: 500 }
+    );
   }
-} 
+}

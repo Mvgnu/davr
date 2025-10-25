@@ -67,7 +67,7 @@ export default function ListingForm({ listingId, initialData }: ListingFormProps
 
   const isEditing = !!listingId;
 
-  const { register, handleSubmit, control, watch, setValue, reset, formState: { errors, isDirty } } = useForm<ListingFormData>({
+  const form = useForm<ListingFormData>({
     resolver: zodResolver(listingFormSchema),
     // Use initialData to set default values when editing
     defaultValues: initialData ? {
@@ -80,6 +80,8 @@ export default function ListingForm({ listingId, initialData }: ListingFormProps
         status: ListingStatus.ACTIVE, // Default status for new
     }
   });
+
+  const { register, handleSubmit, control, watch, setValue, reset, formState: { errors, isDirty } } = form;
 
   // Watch relevant form fields
   const existingImageUrl = watch('imageUrl'); // Watch existing URL from form
@@ -297,6 +299,7 @@ export default function ListingForm({ listingId, initialData }: ListingFormProps
         <CardDescription>{isEditing ? 'Update the details for your listing.' : 'Fill in the details for your new listing.'} </CardDescription>
       </CardHeader>
       <CardContent>
+        <Form {...form}>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Title */}
           <div>
@@ -517,6 +520,7 @@ export default function ListingForm({ listingId, initialData }: ListingFormProps
             </Button>
           </div>
         </form>
+        </Form>
       </CardContent>
     </Card>
   );
@@ -524,4 +528,4 @@ export default function ListingForm({ listingId, initialData }: ListingFormProps
 
 // Helper components from shadcn/ui (already imported but for clarity)
 // Need to import FormField, FormItem, FormLabel, FormControl, FormMessage, FormDescription
-import { FormField, FormItem, FormLabel, FormControl, FormMessage, FormDescription } from "@/components/ui/form"; 
+import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage, FormDescription } from "@/components/ui/form"; 

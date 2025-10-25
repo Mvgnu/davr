@@ -1,23 +1,37 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
-import { Prisma, VerificationStatus } from '@prisma/client'; // Import Prisma types
+import { Prisma, VerificationStatus } from '@prisma/client';
+import {
+  recyclingCenterQuerySchema,
+  validateRequest,
+  formatValidationErrors,
+} from '@/lib/api/validation';
+import { sortByDistance, filterByDistance } from '@/lib/utils/distance';
 
 /**
- * GET handler to fetch recycling centers
+ * GET handler to fetch recycling centers with validation
  */
 export async function GET(request: NextRequest) {
-  // Get search parameters from the URL
-  const searchParams = request.nextUrl.searchParams;
-  const city = searchParams.get('city');
-  const material = searchParams.get('material');
-  const search = searchParams.get('search');
-  const limit = parseInt(searchParams.get('limit') || '100');
-  const verified = searchParams.get('verified') === 'true';
-  const sort = searchParams.get('sort') || 'name'; // Default sort by name
+  // Parse and validate query parameters
+  const searchParams = Object.fromEntries(request.nextUrl.searchParams);
+  const validation = validateRequest(recyclingCenterQuerySchema, searchParams);
+
+  if (!validation.success) {
+    return NextResponse.json(
+      {
+        error: 'VALIDATION_ERROR',
+        message: 'Ungültige Anfrageparameter',
+        details: formatValidationErrors(validation.error),
+      },
+      { status: 400 }
+    );
+  }
+
+  const { city, material, materials, search, limit, page = 1, verified, minRating, sortBy, sortOrder, lat, lng, maxDistance } = validation.data;
   
   try {
     // Build the where clause dynamically
-    let where: Prisma.RecyclingCenterWhereInput = {};
+    const where: Prisma.RecyclingCenterWhereInput = {};
 
     if (city) {
       where.city = { contains: city, mode: 'insensitive' };
@@ -28,13 +42,23 @@ export async function GET(request: NextRequest) {
         { name: { contains: search, mode: 'insensitive' } },
         { city: { contains: search, mode: 'insensitive' } },
         { postal_code: { contains: search, mode: 'insensitive' } },
-        // Add other searchable fields if needed (e.g., address_street)
+        { address_street: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
       ];
     }
 
-    if (material) {
-      // Filter by checking if the center has at least one offer 
-      // for a material with a matching name.
+    // Handle multiple materials filter
+    if (materials) {
+      const materialIds = materials.split(',').filter(Boolean);
+      if (materialIds.length > 0) {
+        where.offers = {
+          some: {
+            material_id: { in: materialIds },
+          },
+        };
+      }
+    } else if (material) {
+      // Single material by name (legacy support)
       where.offers = {
         some: {
           material: {
@@ -48,19 +72,20 @@ export async function GET(request: NextRequest) {
       where.verification_status = VerificationStatus.VERIFIED;
     }
 
-    // Define orderBy based on sort parameter
-    let orderBy: Prisma.RecyclingCenterOrderByWithRelationInput | Prisma.RecyclingCenterOrderByWithRelationInput[] = {};
-    
-    // For rating, we'll use reviews
-    if (sort === 'rating') {
-      // We'll get all centers and then sort them manually by average review rating
-      orderBy = { name: 'asc' }; // Default sort for now
-    } else {
-      orderBy = { name: 'asc' };
-    }
+    // Count total matching centers for pagination
+    const totalCenters = await prisma.recyclingCenter.count({ where });
+
+    // Define orderBy
+    const orderBy: Prisma.RecyclingCenterOrderByWithRelationInput =
+      sortBy === 'created_at'
+        ? { created_at: sortOrder }
+        : { name: sortOrder };
+
+    // Calculate pagination
+    const skip = (page - 1) * limit;
 
     const centers = await prisma.recyclingCenter.findMany({
-      where, // Apply the dynamically built where clause
+      where,
       select: {
         id: true,
         name: true,
@@ -71,6 +96,8 @@ export async function GET(request: NextRequest) {
         website: true,
         verification_status: true,
         image_url: true,
+        latitude: true,
+        longitude: true,
         reviews: {
           select: {
             rating: true,
@@ -78,45 +105,85 @@ export async function GET(request: NextRequest) {
         },
       },
       orderBy,
+      skip,
       take: limit,
     });
 
-    // Process centers to calculate average rating if needed
-    const processedCenters = centers.map(center => {
-      // Calculate average rating if we have reviews
-      const ratings = center.reviews.map(review => review.rating);
-      const averageRating = ratings.length 
-        ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length 
-        : null;
-      
-      // Return the center with the calculated rating and without the reviews array
+    // Process centers to calculate average rating and filter by minRating
+    let processedCenters = centers.map((center) => {
+      const ratings = center.reviews.map((review) => review.rating);
+      const averageRating =
+        ratings.length > 0
+          ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+          : null;
+
       const { reviews, ...centerWithoutReviews } = center;
       return {
         ...centerWithoutReviews,
-        rating: averageRating,
+        rating: {
+          average: averageRating,
+          count: ratings.length,
+        },
+        location: {
+          city: center.city,
+          zipCode: center.postal_code,
+          street: center.address_street,
+          coordinates: center.latitude && center.longitude
+            ? { lat: center.latitude, lng: center.longitude }
+            : null,
+        },
       };
     });
 
-    // Custom sort by rating if requested
-    if (sort === 'rating') {
-      processedCenters.sort((a, b) => {
-        // Null ratings go to the end
-        if (a.rating === null) return 1;
-        if (b.rating === null) return -1;
-        // Higher ratings first
-        return b.rating - a.rating;
-      });
-      
-      // Limit after sorting for accurate top rated centers
-      return NextResponse.json(processedCenters.slice(0, limit));
+    // Filter by minimum rating if specified
+    if (minRating) {
+      processedCenters = processedCenters.filter(
+        (center) => center.rating.average !== null && center.rating.average >= minRating
+      );
     }
 
-    return NextResponse.json(processedCenters);
+    // Custom sort by rating if requested
+    if (sortBy === 'rating') {
+      processedCenters.sort((a, b) => {
+        const ratingA = a.rating.average ?? 0;
+        const ratingB = b.rating.average ?? 0;
+        return sortOrder === 'asc' ? ratingA - ratingB : ratingB - ratingA;
+      });
+    }
+
+    // Distance-based sorting and filtering if location is provided
+    if (sortBy === 'distance' && lat !== undefined && lng !== undefined) {
+      // Sort centers by computed distance
+      processedCenters = sortByDistance(processedCenters, lat, lng) as typeof processedCenters;
+
+      // Filter by maxDistance if specified (recalculate to avoid relying on extra property)
+      if (maxDistance) {
+        processedCenters = filterByDistance(processedCenters, lat, lng, maxDistance) as typeof processedCenters;
+      }
+    }
+
+    // Calculate pagination metadata
+    const totalPages = Math.ceil(totalCenters / limit);
+
+    return NextResponse.json({
+      centers: processedCenters,
+      pagination: {
+        page,
+        totalPages,
+        totalItems: totalCenters,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
 
   } catch (error) {
-    console.error('[GET Recycling Centers Error with Filters]', error);
+    console.error('[GET Recycling Centers Error]', error);
     return NextResponse.json(
-      { error: 'Failed to fetch recycling centers' },
+      {
+        error: 'SERVER_ERROR',
+        message: 'Fehler beim Abrufen der Recyclingcenter',
+        details: process.env.NODE_ENV === 'development' ? String(error) : undefined,
+      },
       { status: 500 }
     );
   }

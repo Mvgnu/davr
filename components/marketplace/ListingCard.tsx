@@ -25,6 +25,20 @@ interface MarketplaceListing {
   created_at: string; // ISO date string
   user?: { // Include user info if needed
     name?: string;
+    id?: string; // Add user ID for linking to profile
+  };
+  // Add more fields for richer display
+  type?: string; // BUY/SELL
+  quantity?: number | null;
+  unit?: string | null;
+  seller?: { // More detailed seller info
+    id: string;
+    name: string | null;
+    rating?: number | null; // Average rating
+    reviewCount?: number | null; // Number of reviews
+    joinedSince?: Date | null; // When seller joined
+    totalListings?: number | null; // Number of active listings
+    responseTime?: string | null; // Average response time
   };
 }
 
@@ -76,13 +90,28 @@ const ListingCard: React.FC<ListingCardProps> = ({
     status = 'available', // Default status
     category,
     location,
-    created_at
+    created_at,
+    seller
   } = listing;
 
   const timeAgo = formatDistanceToNowStrict(new Date(created_at), { addSuffix: true, locale: de });
   const categoryStyle = getCategoryStyle(category);
-  const linkHref = slug ? `/marketplace/${slug}` : `/marketplace/listings/${id}`; // Fix: use listings (plural)
+  const linkHref = slug ? `/marketplace/${slug}` : `/marketplace/listings/${id}`;
   const priceDisplay = displayPrice(approximate_min_price, approximate_max_price);
+
+  // Format seller rating for display
+  const displayRating = seller?.rating ? (
+    <div className="flex items-center gap-1">
+      <span className="text-yellow-500">★</span>
+      <span className="text-sm font-medium">{seller.rating?.toFixed(1)}</span>
+      {seller.reviewCount !== undefined && (
+        <span className="text-xs text-muted-foreground">({seller.reviewCount})</span>
+      )}
+    </div>
+  ) : null;
+
+  // Format seller join date
+  const sellerSince = seller?.joinedSince ? `Seit ${seller.joinedSince.getFullYear()}` : null;
 
   return (
     <Card className={`overflow-hidden flex flex-col h-full border border-border hover:shadow-lg transition-shadow duration-200 ${className}`}>
@@ -120,6 +149,22 @@ const ListingCard: React.FC<ListingCardProps> = ({
             {title}
           </Link>
         </CardTitle>
+        
+        {/* Seller info */}
+        {seller && (
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="flex -space-x-2">
+                <div className="inline-block h-6 w-6 rounded-full bg-gray-300 border border-white" />
+              </div>
+              <span className="text-xs font-medium text-muted-foreground">
+                {seller.name || 'Unbekannter Verkäufer'}
+              </span>
+            </div>
+            {displayRating && <div className="flex items-center">{displayRating}</div>}
+          </div>
+        )}
+
         <CardDescription className="text-sm text-muted-foreground mb-3 flex-grow">
           {description ? (description.length > 100 ? `${description.substring(0, 100)}...` : description) : 'Keine Beschreibung verfügbar'}
         </CardDescription>
@@ -139,11 +184,22 @@ const ListingCard: React.FC<ListingCardProps> = ({
         </div>
       </CardContent>
 
-      <CardFooter className="p-4 bg-muted/30 border-t border-border flex justify-between items-center text-xs text-muted-foreground">
-        <span>{timeAgo}</span>
-        <Link href={linkHref} className="flex items-center gap-1 text-primary hover:underline">
-          Details <ExternalLink size={14} />
-        </Link>
+      <CardFooter className="p-4 bg-muted/30 border-t border-border flex flex-col items-start gap-2">
+        <div className="flex justify-between w-full items-center">
+          <span className="text-xs text-muted-foreground">{timeAgo}</span>
+          <Link href={linkHref} className="flex items-center gap-1 text-primary hover:underline text-sm">
+            Details <ExternalLink size={14} />
+          </Link>
+        </div>
+        
+        {sellerSince && (
+          <div className="flex justify-between w-full items-center text-xs text-muted-foreground">
+            <span>{sellerSince}</span>
+            {seller?.totalListings !== undefined && (
+              <span>{seller.totalListings} Aktive Angebote</span>
+            )}
+          </div>
+        )}
       </CardFooter>
     </Card>
   );

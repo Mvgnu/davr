@@ -1,39 +1,9 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { JWT } from "next-auth/jwt";
 import { query } from "@/lib/db";
 import { verifyClientHashedPassword } from "@/lib/utils/auth/serverPasswordUtils";
 
-// Extend the default session types
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string;
-      name?: string | null;
-      email?: string | null;
-      image?: string | null;
-      isAdmin?: boolean;
-      role?: string | null;
-    }
-  }
-
-  interface User {
-    id: string;
-    name?: string;
-    email?: string;
-    isAdmin?: boolean;
-    role?: string;
-  }
-}
-
-// Extend JWT type
-declare module "next-auth/jwt" {
-  interface JWT {
-    id: string;
-    isAdmin?: boolean;
-    role?: string;
-  }
-}
+// Type declarations are in types/next-auth.d.ts
 
 export const authOptions: NextAuthOptions = {
   providers: [

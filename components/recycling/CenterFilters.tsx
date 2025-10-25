@@ -6,7 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, X, Filter, MapPin } from 'lucide-react'; // Added MapPin
+import { MultiSelect } from '@/components/ui/multi-select';
+import { Search, X, Filter, MapPin, Crosshair, Clock } from 'lucide-react'; // Added icons
+import { useGeolocation } from '@/hooks/useGeolocation';
 import { useDebouncedCallback } from 'use-debounce';
 
 // Type for fetched materials
@@ -21,6 +23,10 @@ export default function CenterFilters() {
 
   const [cityFilter, setCityFilter] = useState(searchParams.get('city') || '');
   const [materialFilter, setMaterialFilter] = useState(searchParams.get('material') || ''); 
+  const [materialsMulti, setMaterialsMulti] = useState<string[]>(() => {
+    const m = searchParams.get('materials');
+    return m ? m.split(',').filter(Boolean) : [];
+  });
   const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
   const [isClient, setIsClient] = useState(false); // Client-side check
 
@@ -28,6 +34,16 @@ export default function CenterFilters() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
   const [materialsError, setMaterialsError] = useState<string | null>(null);
+
+  // New filters
+  const [openNow, setOpenNow] = useState(searchParams.get('openNow') === 'true');
+  const [distance, setDistance] = useState<number>(parseInt(searchParams.get('maxDistance') || '0', 10) || 0);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(() => {
+    const lat = parseFloat(searchParams.get('lat') || '');
+    const lng = parseFloat(searchParams.get('lng') || '');
+    return isNaN(lat) || isNaN(lng) ? null : { lat, lng };
+  });
+  const { getCurrentPosition, isLoading: locating, error: geoError } = useGeolocation();
 
   useEffect(() => {
     setIsClient(true); // Mounted
@@ -84,6 +100,20 @@ export default function CenterFilters() {
   const debouncedCityUpdate = useDebouncedCallback((term: string) => {
       updateSearchParams({ city: term });
   }, 500);
+  const debouncedOpenNowUpdate = useDebouncedCallback((checked: boolean) => {
+      updateSearchParams({ openNow: checked ? 'true' : '' });
+  }, 200);
+  const debouncedDistanceUpdate = useDebouncedCallback((value: number) => {
+      const params: Record<string, string> = {};
+      if (value > 0 && coords) {
+        params.maxDistance = String(value);
+        params.lat = String(coords.lat);
+        params.lng = String(coords.lng);
+      } else {
+        params.maxDistance = '';
+      }
+      updateSearchParams(params);
+  }, 300);
   // -------------------------
 
   // Handle search input change
@@ -105,6 +135,36 @@ export default function CenterFilters() {
     const actualValue = value === 'all' ? '' : value;
     setMaterialFilter(actualValue); 
     updateSearchParams({ material: actualValue });
+  };
+
+  const handleMaterialsMultiChange = (values: string[]) => {
+    setMaterialsMulti(values);
+    updateSearchParams({ materials: values.join(',') });
+  };
+
+  const handleOpenNowChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    setOpenNow(checked);
+    debouncedOpenNowUpdate(checked);
+  };
+
+  const handleUseLocation = async () => {
+    try {
+      const position = await getCurrentPosition();
+      const next = { lat: position.coords.latitude, lng: position.coords.longitude };
+      setCoords(next);
+      if (distance > 0) {
+        updateSearchParams({ lat: String(next.lat), lng: String(next.lng), maxDistance: String(distance) });
+      }
+    } catch (e) {
+      // ignore; UI will show geoError if needed
+    }
+  };
+
+  const handleDistanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(e.target.value, 10) || 0;
+    setDistance(value);
+    debouncedDistanceUpdate(value);
   };
 
   // Effect to sync state if URL changes externally (e.g., browser back/forward)
@@ -131,7 +191,7 @@ export default function CenterFilters() {
           Recyclinghöfe filtern
        </h3>
       
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
         {/* Enhanced Search Input */}
         <div>
           <Label htmlFor="search-filter" className="text-sm font-medium text-muted-foreground">Suche</Label>
@@ -191,6 +251,50 @@ export default function CenterFilters() {
               )}
             </SelectContent>
           </Select>
+        </div>
+
+        {/* Multi-select for multiple materials */}
+        <div className="sm:col-span-2 lg:col-span-1">
+          <Label className="text-sm font-medium text-muted-foreground">Mehrere Materialien</Label>
+          <div className="mt-1">
+            <MultiSelect
+              options={materials.map((m) => ({ value: m.name, label: m.name }))}
+              selected={materialsMulti}
+              onChange={handleMaterialsMultiChange}
+              placeholder={materialsLoading ? 'Lade...' : 'Materialien wählen'}
+            />
+          </div>
+        </div>
+
+        {/* Open Now */}
+        <div>
+          <Label htmlFor="open-now" className="text-sm font-medium text-muted-foreground flex items-center gap-2"><Clock className="w-4 h-4"/> Jetzt geöffnet</Label>
+          <div className="mt-2">
+            <input id="open-now" type="checkbox" checked={openNow} onChange={handleOpenNowChange} />
+            <span className="ml-2 text-sm text-muted-foreground">Nur geöffnete</span>
+          </div>
+        </div>
+
+        {/* Distance Slider */}
+        <div className="sm:col-span-2 lg:col-span-1">
+          <Label htmlFor="distance" className="text-sm font-medium text-muted-foreground">Entfernung {distance > 0 ? `(${distance} km)` : ''}</Label>
+          <div className="mt-2 flex items-center gap-3">
+            <input
+              id="distance"
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={distance}
+              onChange={handleDistanceChange}
+              className="w-full"
+              disabled={!coords && distance === 0}
+            />
+            <Button type="button" size="sm" variant="outline" onClick={handleUseLocation} disabled={locating}>
+              <Crosshair className="w-4 h-4 mr-1"/>{locating ? '…' : 'Ort'}
+            </Button>
+          </div>
+          {geoError && <p className="text-xs text-destructive mt-1">{geoError}</p>}
         </div>
       </div>
 

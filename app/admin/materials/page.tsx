@@ -17,15 +17,24 @@ type AdminMaterial = {
   id: string;
   name: string;
   description: string | null;
-  category: string;
+  slug: string;
   parentMaterial: { id: string; name: string } | null;
-  _count: {
-    marketplaceListings: number;
-    recyclingCenterOffers: number;
-    subMaterials: number;
-  };
+  recyclability_percentage: number | null;
+  recycling_difficulty: string | null; // EASY|MEDIUM|HARD
+  category_icon: string | null;
+  environmental_impact: any | null; // Json field
+  preparation_tips: any | null; // Json field
+  acceptance_rate: number | null;
+  average_price_per_unit: number | null;
+  price_unit: string | null;
+  fun_fact: string | null;
+  annual_recycling_volume: number | null;
+  image_url: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  listingCount: number;
+  offerCount: number;
+  subMaterialCount: number;
 };
 
 type PaginatedMaterialsResponse = {
@@ -121,7 +130,9 @@ export default async function AdminMaterialsPage({ searchParams }: AdminMaterial
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead>Recyclability</TableHead>
+                  <TableHead>Difficulty</TableHead>
+                  <TableHead>Acceptance Rate</TableHead>
                   <TableHead>Parent</TableHead>
                   <TableHead>Listings</TableHead>
                   <TableHead>Offers</TableHead>
@@ -133,11 +144,19 @@ export default async function AdminMaterialsPage({ searchParams }: AdminMaterial
                 {materials.map((material) => (
                   <TableRow key={material.id}>
                     <TableCell className="font-medium">{material.name}</TableCell>
-                    <TableCell>{material.category}</TableCell>
+                    <TableCell>
+                      {material.recyclability_percentage !== null ? `${material.recyclability_percentage}%` : <span className="text-gray-400 italic">N/A</span>}
+                    </TableCell>
+                    <TableCell>
+                      {material.recycling_difficulty ? material.recycling_difficulty : <span className="text-gray-400 italic">N/A</span>}
+                    </TableCell>
+                    <TableCell>
+                      {material.acceptance_rate !== null ? `${material.acceptance_rate}%` : <span className="text-gray-400 italic">N/A</span>}
+                    </TableCell>
                     <TableCell>{material.parentMaterial?.name ?? <span className="text-gray-400 italic">N/A</span>}</TableCell>
-                    <TableCell>{material._count.marketplaceListings}</TableCell>
-                    <TableCell>{material._count.recyclingCenterOffers}</TableCell>
-                    <TableCell>{material._count.subMaterials}</TableCell>
+                    <TableCell>{material.listingCount}</TableCell>
+                    <TableCell>{material.offerCount}</TableCell>
+                    <TableCell>{material.subMaterialCount}</TableCell>
                     <TableCell>
                         {/* Actions Cell Component will go here */}
                         <AdminMaterialActionsCell materialId={material.id} materialName={material.name} />

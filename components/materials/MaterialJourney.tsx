@@ -84,22 +84,10 @@ export default function MaterialJourney({
 
       <CardContent className="p-4 sm:p-6">
         <div className="relative">
-          {/* Draw connecting lines BEHIND the steps */} 
-          {journeySteps.map((_, index) => (
-            index < journeySteps.length - 1 && (
-              <div 
-                key={`line-${index}`} 
-                className="absolute left-6 w-0.5 bg-gray-200 dark:bg-gray-600" 
-                style={{ 
-                  // Start slightly below the center of the icon, end slightly above the next
-                  top: `${index * 8 + 3.5}rem`, // Approximate position based on step height (adjust as needed)
-                  height: '5rem' // Approximate height to reach the next step (adjust as needed)
-                }}
-              ></div>
-            )
-          ))}
-          
-          {/* Render steps ON TOP of the lines */} 
+          {/* Vertical connector using border instead of absolute magic numbers */}
+          <div className="absolute left-[1.5rem] top-6 bottom-6 w-px bg-gray-200 dark:bg-gray-600" aria-hidden="true" />
+
+          {/* Render steps over the connector */}
           <div className="space-y-8 relative z-10"> 
             {journeySteps.map((step, index) => {
               const stepId = isDetailedStep(step) ? index + 1 : step.id;

@@ -2,21 +2,22 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  MapPin, 
-  Search, 
-  Recycle, 
-  X, 
-  Filter, 
-  List, 
-  Map as MapIcon, 
-  Clock, 
+import {
+  MapPin,
+  Search,
+  Recycle,
+  X,
+  Filter,
+  List,
+  Map as MapIcon,
+  Clock,
   Building,
   CrosshairIcon,
   ChevronDown
 } from 'lucide-react';
 import { Material, RecyclingStats, groupMaterialsByCategory } from '@/lib/data/recycling';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useSearch } from '@/components/SearchProvider';
 
 interface CityHeroSearchProps {
   cityName: string;
@@ -38,6 +39,7 @@ const CityHeroSearch: React.FC<CityHeroSearchProps> = ({
   cities = []
 }) => {
   const router = useRouter();
+  const searchContext = useSearch();
   const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [city, setCity] = useState(initialCity);
   const [material, setMaterial] = useState(initialMaterial);
@@ -87,12 +89,16 @@ const CityHeroSearch: React.FC<CityHeroSearchProps> = ({
     };
   }, []);
   
-  // Function to get user's location
+  // Function to get user location and save to SearchProvider
   const getUserLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           const { latitude, longitude } = position.coords;
+
+          // Save coordinates to SearchProvider immediately
+          searchContext.setLocation({ lat: latitude, lng: longitude });
+
           try {
             // Reverse geocoding to get city name
             const response = await fetch(
@@ -104,6 +110,9 @@ const CityHeroSearch: React.FC<CityHeroSearchProps> = ({
             } else if (data.address && data.address.town) {
               setCity(data.address.town);
             }
+
+            // Apply filters to update URL with location
+            searchContext.applyFilters();
           } catch (error) {
             console.error("Error getting location:", error);
             alert("Fehler beim Abrufen Ihres Standorts. Bitte geben Sie Ihre Stadt manuell ein.");

@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     let isAdmin = false;
     if (!isDev) {
       const session = await getServerSession();
-      isAdmin = session?.user?.role === 'admin';
+      isAdmin = session?.user?.role === 'ADMIN';
     }
     
     // Only allow in development or for admin users

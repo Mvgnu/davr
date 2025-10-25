@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth/options';
 import ClientRecyclingCenterDetail from './ClientRecyclingCenterDetail';
-import dynamic from 'next/dynamic';
+import { prisma } from '@/lib/db/prisma';
 
 type MaterialOffer = {
   price_per_unit: number | null;
@@ -32,65 +32,126 @@ type CenterDetail = {
   managedById?: string | null;
 };
 
-async function fetchRecyclingCenter(slug: string): Promise<CenterDetail | null> {
+async function fetchRecyclingCenter(slug: string) {
   try {
-    // Set up AbortController with timeout
-    const controller = new AbortController();
-    const signal = controller.signal;
-    const timeout = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-    
-    try {
-      const response = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/recycling-centers/${slug}`, {
-        cache: 'no-store',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal,
-      });
-      
-      clearTimeout(timeout);
-
-      if (response.status === 404) {
-        return null;
-      }
-
-      if (!response.ok) {
-        console.error(`API Error fetching center ${slug}: ${response.status} ${response.statusText}`);
-        throw new Error(`Failed to fetch center data: ${response.statusText}`);
-      }
-
-      const data: CenterDetail = await response.json();
-      return data;
-    } catch (fetchError) {
-      clearTimeout(timeout);
-      console.error(`[Fetch API Error for ${slug}]`, fetchError);
-      
-      // If the fetch from API times out or fails, try direct DB query as fallback
-      console.log(`Falling back to direct DB query for slug: ${slug}`);
-      const { prisma } = await import('@/lib/db/prisma');
-      
-      const center = await prisma.recyclingCenter.findUnique({
-        where: { slug },
-        include: {
-          offers: {
-            include: {
-              material: {
-                select: {
-                  id: true,
-                  name: true,
-                  slug: true,
-                  description: true,
-                },
+    const center = await prisma.recyclingCenter.findUnique({
+      where: { slug },
+      include: {
+        offers: {
+          include: {
+            material: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                description: true,
+                image_url: true,
+                parent_id: true,
               },
+            },
+          },
+          orderBy: {
+            material: {
+              name: 'asc',
+            },
+          },
+        },
+        working_hours: {
+          orderBy: {
+            day_of_week: 'asc',
+          },
+        },
+      },
+    });
+
+    if (!center) return null;
+
+    // Fetch nearby centers if coordinates exist
+    let nearbyCenters: Array<{
+      id: string;
+      name: string;
+      slug: string | null;
+      city: string | null;
+      latitude: number;
+      longitude: number;
+      image_url: string | null;
+      distance: number;
+      _count: { offers: number };
+    }> = [];
+
+    if (center.latitude && center.longitude) {
+      // Simple distance calculation using Haversine formula approximation
+      // For production, consider using PostGIS or a more robust solution
+      const rawNearbyCenters = await prisma.recyclingCenter.findMany({
+        where: {
+          id: { not: center.id },
+          verification_status: 'VERIFIED',
+          latitude: { not: null },
+          longitude: { not: null },
+        },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          city: true,
+          latitude: true,
+          longitude: true,
+          image_url: true,
+          _count: {
+            select: {
+              offers: true,
             },
           },
         },
       });
-      
-      return center as CenterDetail | null;
+
+      // Calculate distances and sort
+      const centersWithDistance = rawNearbyCenters
+        .map((nearbyCenter) => {
+          const lat1 = center.latitude!;
+          const lon1 = center.longitude!;
+          const lat2 = nearbyCenter.latitude!;
+          const lon2 = nearbyCenter.longitude!;
+
+          // Haversine formula
+          const R = 6371; // Earth's radius in km
+          const dLat = ((lat2 - lat1) * Math.PI) / 180;
+          const dLon = ((lon2 - lon1) * Math.PI) / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos((lat1 * Math.PI) / 180) *
+              Math.cos((lat2 * Math.PI) / 180) *
+              Math.sin(dLon / 2) *
+              Math.sin(dLon / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          const distance = R * c;
+
+          return {
+            id: nearbyCenter.id,
+            name: nearbyCenter.name,
+            slug: nearbyCenter.slug,
+            city: nearbyCenter.city,
+            latitude: lat2,
+            longitude: lon2,
+            image_url: nearbyCenter.image_url,
+            distance: Math.round(distance * 10) / 10, // Round to 1 decimal
+            _count: nearbyCenter._count,
+          };
+        })
+        .filter((c) => c.distance <= 30) // Within 30km
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 5);
+
+      nearbyCenters = centersWithDistance;
     }
+
+    return {
+      ...center,
+      nearbyCenters,
+    };
   } catch (error) {
-    console.error(`[Fetch Recycling Center Detail Error - Slug: ${slug}]`, error);
+    console.error(`[Recycling Center DB Query Error - Slug: ${slug}]`, error);
     return null;
   }
 }

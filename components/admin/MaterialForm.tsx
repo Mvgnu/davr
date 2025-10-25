@@ -32,9 +32,18 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 const materialFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name must be 100 characters or less'),
   description: z.string().max(500, 'Description must be 500 characters or less').optional(),
-  category: z.string().min(1, 'Category is required').max(50, 'Category must be 50 characters or less'),
   image_url: z.string().url().optional().nullable(),
-  // Add parentMaterialId later if needed (might require fetching materials for a dropdown)
+  recyclability_percentage: z.number().min(0).max(100).nullable().optional(),
+  recycling_difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).nullable().optional(),
+  category_icon: z.string().max(50, 'Category icon must be 50 characters or less').optional(),
+  environmental_impact: z.record(z.unknown()).nullable().optional(), // { co2_saved_per_kg, energy_saved_percentage, water_saved_liters }
+  preparation_tips: z.array(z.record(z.string())).nullable().optional(), // Array of tip objects: [{ title, description, icon }]
+  acceptance_rate: z.number().min(0).max(100).nullable().optional(),
+  average_price_per_unit: z.number().nullable().optional(),
+  price_unit: z.string().max(20, 'Price unit must be 20 characters or less').optional(),
+  fun_fact: z.string().max(200, 'Fun fact must be 200 characters or less').optional(),
+  annual_recycling_volume: z.number().nullable().optional(),
+  parent_id: z.string().cuid().optional().nullable(),
 });
 
 type MaterialFormValues = z.infer<typeof materialFormSchema>;
@@ -60,8 +69,17 @@ export default function MaterialForm({ initialData, isEditing }: MaterialFormPro
     defaultValues: {
       name: initialData?.name || '',
       description: initialData?.description || '',
-      category: initialData?.category || '',
       image_url: initialData?.image_url || null,
+      recyclability_percentage: initialData?.recyclability_percentage || null,
+      recycling_difficulty: initialData?.recycling_difficulty || null,
+      category_icon: initialData?.category_icon || '',
+      environmental_impact: initialData?.environmental_impact || null,
+      preparation_tips: initialData?.preparation_tips || null,
+      acceptance_rate: initialData?.acceptance_rate || null,
+      average_price_per_unit: initialData?.average_price_per_unit || null,
+      price_unit: initialData?.price_unit || '',
+      fun_fact: initialData?.fun_fact || '',
+      annual_recycling_volume: initialData?.annual_recycling_volume || null,
     },
   });
 
@@ -70,6 +88,32 @@ export default function MaterialForm({ initialData, isEditing }: MaterialFormPro
   useEffect(() => {
       setUploadCompleteUrl(watchedImageUrl ?? null);
   }, [watchedImageUrl]);
+
+  // Fetch all available materials for parent selection
+  const [parentMaterials, setParentMaterials] = React.useState<Array<{id: string, name: string}>>([]);
+  const [loadingParents, setLoadingParents] = React.useState(true);
+  
+  React.useEffect(() => {
+    const fetchParentMaterials = async () => {
+      try {
+        const response = await fetch('/api/materials?limit=100');
+        if (response.ok) {
+          const materials = await response.json();
+          // Filter out the current material if editing to prevent circular references
+          const availableParents = materials.filter((mat: any) => mat.id !== initialData?.id);
+          setParentMaterials(availableParents);
+        } else {
+          console.error('Failed to fetch parent materials');
+        }
+      } catch (error) {
+        console.error('Error fetching parent materials:', error);
+      } finally {
+        setLoadingParents(false);
+      }
+    };
+    
+    fetchParentMaterials();
+  }, [initialData?.id]);
 
   // --- Image Upload Handlers ---
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -215,18 +259,211 @@ export default function MaterialForm({ initialData, isEditing }: MaterialFormPro
           )}
         />
 
-        {/* Category Field */}
+        {/* Recyclability Percentage Field */}
         <FormField
           control={form.control}
-          name="category"
+          name="recyclability_percentage"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Category *</FormLabel>
+              <FormLabel>Recyclability Percentage</FormLabel>
               <FormControl>
-                {/* Consider using a Select component if categories become predefined */}
-                <Input placeholder="e.g., Metal" {...field} disabled={isSubmitting || isUploading} />
+                <Input 
+                  type="number" 
+                  min="0" 
+                  max="100" 
+                  placeholder="e.g., 95" 
+                  {...field} 
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                  disabled={isSubmitting || isUploading} 
+                />
               </FormControl>
               <FormMessage />
+              <FormDescription>Percentage of material that can be recycled (0-100)</FormDescription>
+            </FormItem>
+          )}
+        />
+
+        {/* Recycling Difficulty Field */}
+        <FormField
+          control={form.control}
+          name="recycling_difficulty"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Recycling Difficulty</FormLabel>
+              <FormControl>
+                <select
+                  {...field}
+                  value={field.value || ''}
+                  onChange={(e) => field.onChange(e.target.value || null)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isSubmitting || isUploading}
+                >
+                  <option value="">Select difficulty</option>
+                  <option value="EASY">Easy</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HARD">Hard</option>
+                </select>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Category Icon Field */}
+        <FormField
+          control={form.control}
+          name="category_icon"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Category Icon</FormLabel>
+              <FormControl>
+                <Input placeholder="e.g., metal, paper, plastic" {...field} disabled={isSubmitting || isUploading} />
+              </FormControl>
+              <FormMessage />
+              <FormDescription>Icon identifier for categorization (e.g., metal, paper, plastic)</FormDescription>
+            </FormItem>
+          )}
+        />
+
+        {/* Fun Fact Field */}
+        <FormField
+          control={form.control}
+          name="fun_fact"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Fun Fact</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder="Interesting fact about this material..."
+                  className="resize-y"
+                  {...field}
+                  value={field.value ?? ''}
+                  disabled={isSubmitting || isUploading}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Acceptance Rate Field */}
+        <FormField
+          control={form.control}
+          name="acceptance_rate"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Acceptance Rate</FormLabel>
+              <FormControl>
+                <Input 
+                  type="number" 
+                  min="0" 
+                  max="100" 
+                  placeholder="e.g., 75" 
+                  {...field} 
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                  disabled={isSubmitting || isUploading} 
+                />
+              </FormControl>
+              <FormMessage />
+              <FormDescription>Percentage of centers that accept this material</FormDescription>
+            </FormItem>
+          )}
+        />
+
+        {/* Average Price per Unit Field */}
+        <FormField
+          control={form.control}
+          name="average_price_per_unit"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Average Price per Unit</FormLabel>
+              <FormControl>
+                <Input 
+                  type="number" 
+                  step="0.01" 
+                  placeholder="e.g., 0.50" 
+                  {...field} 
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
+                  disabled={isSubmitting || isUploading} 
+                />
+              </FormControl>
+              <FormMessage />
+              <FormDescription>Average price paid per unit (e.g., per kg)</FormDescription>
+            </FormItem>
+          )}
+        />
+
+        {/* Price Unit Field */}
+        <FormField
+          control={form.control}
+          name="price_unit"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Price Unit</FormLabel>
+              <FormControl>
+                <Input placeholder="e.g., kg, tonne, unit" {...field} disabled={isSubmitting || isUploading} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Annual Recycling Volume Field */}
+        <FormField
+          control={form.control}
+          name="annual_recycling_volume"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Annual Recycling Volume</FormLabel>
+              <FormControl>
+                <Input 
+                  type="number" 
+                  step="0.01" 
+                  placeholder="e.g., 1000.5" 
+                  {...field} 
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : null)}
+                  disabled={isSubmitting || isUploading} 
+                />
+              </FormControl>
+              <FormMessage />
+              <FormDescription>Global or national recycling volume in tonnes per year</FormDescription>
+            </FormItem>
+          )}
+        />
+
+        {/* Parent Material Selection */}
+        <FormField
+          control={form.control}
+          name="parent_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Parent Material</FormLabel>
+              {loadingParents ? (
+                <div className="text-sm text-muted-foreground">Loading parent materials...</div>
+              ) : (
+                <FormControl>
+                  <select
+                    {...field}
+                    value={field.value || ''}
+                    onChange={(e) => field.onChange(e.target.value || null)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={isSubmitting || isUploading}
+                  >
+                    <option value="">No parent (top-level material)</option>
+                    {parentMaterials.map((material) => (
+                      <option key={material.id} value={material.id}>
+                        {material.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormControl>
+              )}
+              <FormMessage />
+              <FormDescription>Select a parent material to create a hierarchical relationship</FormDescription>
             </FormItem>
           )}
         />

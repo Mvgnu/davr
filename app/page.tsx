@@ -17,68 +17,6 @@ export const metadata: Metadata = {
   keywords: 'Recycling, Wertstoff, Ankaufspreis, Schrottpreis, Recyclinghof, Wertstoffe verkaufen, Nachhaltigkeit',
 };
 
-// Popular material categories
-const popularMaterials = [
-  {
-    id: 'aluminum',
-    name: 'Aluminium',
-    description: 'Getränkedosen, Alufolien, Profile und mehr',
-    icon: '/images/materials/aluminum.jpg',
-    color: 'bg-blue-100 text-blue-800 border-blue-200',
-  },
-  {
-    id: 'paper',
-    name: 'Papier',
-    description: 'Zeitungen, Kartonagen, Bücher und mehr',
-    icon: '/images/materials/paper.jpg',
-    color: 'bg-green-100 text-green-800 border-green-200',
-  },
-  {
-    id: 'metal',
-    name: 'Metall',
-    description: 'Stahl, Kupfer, Messing, Zink und mehr',
-    icon: '/images/materials/metal.jpg',
-    color: 'bg-gray-100 text-gray-800 border-gray-200',
-  },
-  {
-    id: 'electronics',
-    name: 'Elektronik',
-    description: 'Computer, Handys, Kabel und mehr',
-    icon: '/images/materials/electronics.jpg',
-    color: 'bg-purple-100 text-purple-800 border-purple-200',
-  },
-  {
-    id: 'glass',
-    name: 'Glas',
-    description: 'Flaschen, Behälter, Fenster und mehr',
-    icon: '/images/materials/glass.jpg',
-    color: 'bg-cyan-100 text-cyan-800 border-cyan-200',
-  },
-  {
-    id: 'plastic',
-    name: 'Kunststoff',
-    description: 'PET-Flaschen, Folien, Verpackungen und mehr',
-    icon: '/images/materials/plastic.jpg',
-    color: 'bg-red-100 text-red-800 border-red-200',
-  },
-];
-
-// Popular German cities
-const popularCities = [
-  'Berlin',
-  'Hamburg',
-  'München',
-  'Köln',
-  'Frankfurt',
-  'Stuttgart',
-  'Düsseldorf',
-  'Leipzig',
-  'Dortmund',
-  'Essen',
-  'Dresden',
-  'Hannover',
-];
-
 // Type for the fetched material data
 type TopMaterial = {
   name: string;
@@ -135,7 +73,7 @@ export default async function HomePage() {
           {/* Abstract Background Image */}
           <div className="absolute inset-0 z-0 opacity-30">
              <Image
-                src="/images/hero-background-abstract.jpg" // Placeholder for a suitable abstract image
+                src="/images/hero-illustration.svg"
                 alt="Moderner Recycling Hintergrund"
                 fill
                 style={{ objectFit: 'cover' }}

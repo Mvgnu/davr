@@ -17,7 +17,7 @@ interface MaterialPreviewCardProps {
 
 const MaterialPreviewCard: React.FC<MaterialPreviewCardProps> = ({ material }) => {
   const { name, slug, image_url, description } = material;
-  const placeholderImage = '/images/placeholder/material.jpg'; // Default placeholder
+  const placeholderImage = '/images/placeholder-marketplace.svg'; // Use existing SVG placeholder
   const linkHref = `/materials/${slug}`;
 
   return (

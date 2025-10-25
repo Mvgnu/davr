@@ -11,8 +11,21 @@ type MaterialResponse = {
     id: string;
     name: string;
     description: string | null;
-    category: string;
-    // Add other fields if they exist and are needed for the form
+    slug: string;
+    parentMaterial: { id: string; name: string } | null;
+    recyclability_percentage: number | null;
+    recycling_difficulty: 'EASY' | 'MEDIUM' | 'HARD' | null; // EASY|MEDIUM|HARD
+    category_icon: string | null;
+    environmental_impact: any | null; // Json field
+    preparation_tips: any | null; // Json field
+    acceptance_rate: number | null;
+    average_price_per_unit: number | null;
+    price_unit: string | null;
+    fun_fact: string | null;
+    annual_recycling_volume: number | null;
+    image_url: string | null;
+    created_at: Date | string;
+    updated_at: Date | string;
   };
   error?: string;
 };
@@ -78,10 +91,28 @@ export default async function EditMaterialPage({ params }: { params: { materialI
     );
   }
 
-  // Prepare data for the form, converting null description to undefined
+  // Prepare data for the form, carefully mapping fields to match form expectations
   const initialFormData = {
-      ...result.data,
-      description: result.data.description ?? undefined, 
+    id: result.data.id,
+    name: result.data.name,
+    description: result.data.description ?? undefined,
+    slug: result.data.slug,
+    parent_id: result.data.parentMaterial?.id || null,  // Map parent material id
+    recyclability_percentage: result.data.recyclability_percentage,
+    // Ensure recycling_difficulty is one of the valid enum values or undefined
+    recycling_difficulty: result.data.recycling_difficulty && 
+      ['EASY', 'MEDIUM', 'HARD'].includes(result.data.recycling_difficulty) 
+        ? result.data.recycling_difficulty as 'EASY' | 'MEDIUM' | 'HARD'
+        : undefined,
+    category_icon: result.data.category_icon ?? undefined,
+    environmental_impact: result.data.environmental_impact ?? undefined,
+    preparation_tips: result.data.preparation_tips ?? undefined,
+    acceptance_rate: result.data.acceptance_rate,
+    average_price_per_unit: result.data.average_price_per_unit,
+    price_unit: result.data.price_unit ?? undefined,
+    fun_fact: result.data.fun_fact ?? undefined,
+    annual_recycling_volume: result.data.annual_recycling_volume,
+    image_url: result.data.image_url ?? undefined,
   };
 
   return (

@@ -1,7 +1,9 @@
 import NextAuth from 'next-auth';
-import { authOptions } from '@/lib/auth/options'; // Assuming @ alias is set up for src or lib
+import { authOptions } from '@/lib/auth/options';
 
-// NextAuth handles GET and POST requests at this route
+// Create and export the NextAuth handlers
+// Note: Rate limiting is temporarily disabled to ensure auth works properly
+// It can be re-added once the basic auth flow is working
 const handler = NextAuth(authOptions);
 
-export { handler as GET, handler as POST }; 
+export { handler as GET, handler as POST };

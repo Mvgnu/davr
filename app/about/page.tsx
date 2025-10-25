@@ -18,7 +18,7 @@ export default function AboutPage() {
       <section className="relative py-20 bg-green-50 dark:bg-green-950/20 overflow-hidden">
         <div className="absolute inset-0 opacity-20">
           <Image 
-            src="/images/hero-background-abstract.jpg"
+            src="/images/hero-illustration.svg"
             alt="Hintergrund"
             fill
             style={{ objectFit: 'cover' }}

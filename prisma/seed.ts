@@ -258,7 +258,9 @@ async function main() {
       email: 'admin@example.com',
       name: 'Admin User',
       password: adminPassword,
-      isAdmin: true,
+      role: 'ADMIN',
+      emailVerified: new Date(),
+      image: '/images/avatars/admin.jpg',
     },
   });
   console.log(`Created/Found admin user with id: ${adminUser.id}`);
@@ -272,10 +274,28 @@ async function main() {
       email: 'user@example.com',
       name: 'Normal User',
       password: userPassword,
-      isAdmin: false,
+      role: 'USER',
+      emailVerified: new Date(),
+      image: '/images/avatars/user.jpg',
     },
   });
   console.log(`Created/Found normal user with id: ${normalUser.id}`);
+
+  // Create a center owner user
+  const centerOwnerPassword = await bcrypt.hash('password123', 10);
+  const centerOwnerUser = await prismaClient.user.upsert({
+    where: { email: 'owner@example.com' },
+    update: {},
+    create: {
+      email: 'owner@example.com',
+      name: 'Center Owner User',
+      password: centerOwnerPassword,
+      role: 'CENTER_OWNER',
+      emailVerified: new Date(),
+      image: '/images/avatars/owner.jpg',
+    },
+  });
+  console.log(`Created/Found center owner user with id: ${centerOwnerUser.id}`);
 
   // --- Seed Materials with enhanced descriptions (Create parents first) ---
   const metal = await prismaClient.material.upsert({ 
@@ -456,7 +476,7 @@ async function main() {
       longitude: 9.9937,
       phone_number: '040 987654',
       website: 'https://example-hamburg.com',
-      managedById: adminUser.id,
+      managedById: centerOwnerUser.id, // Assign to center owner
       slug: 'wertstoffhof-hamburg-altona',
       verification_status: 'PENDING',
     }

@@ -18,7 +18,7 @@ export default function ForRecyclingCentersPage() {
       <section className="relative py-20 bg-green-50 dark:bg-green-950/20 overflow-hidden">
         <div className="absolute inset-0 opacity-20">
           <Image 
-            src="/images/hero-background-abstract.jpg"
+            src="/images/hero-illustration.svg"
             alt="Recyclinghof Hintergrund"
             fill
             style={{ objectFit: 'cover' }}
@@ -165,7 +165,7 @@ export default function ForRecyclingCentersPage() {
             </div>
             <div className="rounded-lg overflow-hidden shadow-xl">
               <Image
-                src="/images/recycling-center/digital-tools.jpg"
+                src="/images/cta-illustration.svg"
                 alt="Digitale Werkzeuge für Recyclinghöfe"
                 width={600}
                 height={450}

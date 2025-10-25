@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertTriangle, Upload, X, FileText, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
@@ -25,6 +25,13 @@ const claimFormSchema = z.object({
 });
 
 type ClaimFormInputs = z.infer<typeof claimFormSchema>;
+
+interface UploadedDocument {
+    url: string;
+    filename: string;
+    size: number;
+    type: string;
+}
 
 interface ClaimOwnershipFormProps {
     centerId: string;
@@ -44,6 +51,8 @@ export function ClaimOwnershipForm({
     const { data: session } = useSession();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
+    const [uploadedDocuments, setUploadedDocuments] = useState<UploadedDocument[]>([]);
+    const [isUploading, setIsUploading] = useState(false);
 
     const { 
         register, 
@@ -62,6 +71,54 @@ export function ClaimOwnershipForm({
         }
     });
 
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+
+        setIsUploading(true);
+        try {
+            for (const file of Array.from(files)) {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch('/api/claims/upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Upload failed');
+                }
+
+                const result = await response.json();
+                setUploadedDocuments(prev => [...prev, {
+                    url: result.url,
+                    filename: result.filename,
+                    size: result.size,
+                    type: result.type,
+                }]);
+            }
+            toast.success('Document(s) uploaded successfully');
+        } catch (err: any) {
+            console.error('Upload error:', err);
+            toast.error(err.message || 'Failed to upload document');
+        } finally {
+            setIsUploading(false);
+            event.target.value = '';
+        }
+    };
+
+    const removeDocument = (index: number) => {
+        setUploadedDocuments(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const formatFileSize = (bytes: number): string => {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+
     const onSubmit: SubmitHandler<ClaimFormInputs> = async (data) => {
         setIsSubmitting(true);
         setSubmitError(null);
@@ -70,7 +127,11 @@ export function ClaimOwnershipForm({
             const response = await fetch('/api/claims', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...data, recyclingCenterId: centerId }),
+                body: JSON.stringify({
+                    ...data,
+                    recyclingCenterId: centerId,
+                    documents: uploadedDocuments.length > 0 ? uploadedDocuments : null,
+                }),
             });
 
             const result = await response.json();
@@ -80,9 +141,10 @@ export function ClaimOwnershipForm({
             }
 
             toast.success('Claim submitted successfully! You will be notified once it is reviewed.');
-            reset(); // Clear form
-            onOpenChange(false); // Close dialog
-            if (onClaimSubmitted) onClaimSubmitted(); // Optional callback
+            reset();
+            setUploadedDocuments([]);
+            onOpenChange(false);
+            if (onClaimSubmitted) onClaimSubmitted();
 
         } catch (err: any) {
             console.error("Claim submission error:", err);
@@ -93,9 +155,12 @@ export function ClaimOwnershipForm({
         }
     };
 
-    // Reset error when dialog closes/opens or form changes
+    // Reset error and documents when dialog closes/opens
     React.useEffect(() => {
         setSubmitError(null);
+        if (!isOpen) {
+            setUploadedDocuments([]);
+        }
     }, [isOpen]);
 
     return (
@@ -142,16 +207,87 @@ export function ClaimOwnershipForm({
                     </div>
                     <div className="space-y-1">
                         <Label htmlFor="message">Message <span className="text-destructive">*</span></Label>
-                        <Textarea 
-                            id="message" 
-                            {...register('message')} 
-                            rows={4} 
+                        <Textarea
+                            id="message"
+                            {...register('message')}
+                            rows={4}
                             maxLength={1000}
                             disabled={isSubmitting}
                             placeholder="Briefly explain why you are claiming this listing (e.g., I am the owner/manager)..."
                         />
                         {errors.message && <p className="text-xs text-destructive">{errors.message.message}</p>}
                     </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="documents">Supporting Documents (Optional)</Label>
+                        <p className="text-xs text-muted-foreground mb-2">
+                            Upload business license, ID, or other proof of ownership (max 5MB per file, PDF/Images allowed)
+                        </p>
+
+                        <div className="flex items-center gap-2">
+                            <Input
+                                id="documents"
+                                type="file"
+                                accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"
+                                multiple
+                                onChange={handleFileUpload}
+                                disabled={isSubmitting || isUploading}
+                                className="hidden"
+                            />
+                            <Label
+                                htmlFor="documents"
+                                className={`flex items-center justify-center gap-2 px-4 py-2 border border-input rounded-md cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors ${
+                                    isUploading || isSubmitting ? 'opacity-50 cursor-not-allowed' : ''
+                                }`}
+                            >
+                                {isUploading ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Uploading...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Upload className="h-4 w-4" />
+                                        Upload Documents
+                                    </>
+                                )}
+                            </Label>
+                        </div>
+
+                        {uploadedDocuments.length > 0 && (
+                            <div className="space-y-2 mt-3">
+                                {uploadedDocuments.map((doc, index) => (
+                                    <div
+                                        key={index}
+                                        className="flex items-center justify-between p-2 bg-muted rounded-md text-sm"
+                                    >
+                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                            {doc.type.startsWith('image/') ? (
+                                                <ImageIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                            ) : (
+                                                <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                            )}
+                                            <span className="truncate">{doc.filename}</span>
+                                            <span className="text-xs text-muted-foreground flex-shrink-0">
+                                                ({formatFileSize(doc.size)})
+                                            </span>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => removeDocument(index)}
+                                            disabled={isSubmitting}
+                                            className="h-6 w-6 p-0"
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
                     <DialogFooter>
                         <DialogPrimitive.Close asChild>
                             <Button type="button" variant="outline" disabled={isSubmitting}>Cancel</Button>

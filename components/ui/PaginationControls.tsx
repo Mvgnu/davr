@@ -9,12 +9,14 @@ interface PaginationControlsProps {
   currentPage: number;
   totalPages: number;
   baseUrl: string; // Base path for navigation (e.g., '/marketplace')
+  extraParams?: Record<string, string>; // Additional parameters to preserve
 }
 
 const PaginationControls: React.FC<PaginationControlsProps> = ({ 
   currentPage, 
   totalPages, 
-  baseUrl 
+  baseUrl,
+  extraParams = {}
 }) => {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -24,6 +26,10 @@ const PaginationControls: React.FC<PaginationControlsProps> = ({
     if (newPage < 1 || newPage > totalPages) return; // Basic boundary check
 
     const current = new URLSearchParams(Array.from(searchParams.entries()));
+    // Add extra params that were passed in
+    Object.entries(extraParams).forEach(([key, value]) => {
+      current.set(key, value);
+    });
     current.set('page', String(newPage));
     const search = current.toString();
     const query = search ? `?${search}` : '';

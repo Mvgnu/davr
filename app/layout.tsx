@@ -4,7 +4,9 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Providers from '@/components/Providers';
 import Navbar from '@/components/Navbar';
+import Topbar from '@/components/Topbar';
 import Footer from '@/components/Footer';
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -22,15 +24,20 @@ export default function RootLayout({
   return (
     <html lang="de">
       <body className={inter.className}>
-        <Providers>
-          <div className="flex flex-col min-h-screen">
-            <Navbar />
-            <main className="flex-grow">
-              {children}
-            </main>
-            <Footer />
-          </div>
-        </Providers>
+        <ErrorBoundary showDetails={process.env.NODE_ENV === 'development'}>
+          <Providers>
+            <div className="flex flex-col min-h-screen">
+              <Topbar />
+              <Navbar />
+              <main className="flex-grow">
+                <ErrorBoundary>
+                  {children}
+                </ErrorBoundary>
+              </main>
+              <Footer />
+            </div>
+          </Providers>
+        </ErrorBoundary>
       </body>
     </html>
   );

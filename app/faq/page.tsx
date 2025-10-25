@@ -24,7 +24,7 @@ export default function FAQPage() {
       <section className="relative py-20 bg-muted/50 overflow-hidden">
         <div className="absolute inset-0 opacity-20">
           <Image 
-            src="/images/hero-background-abstract.jpg"
+            src="/images/hero-illustration.svg"
             alt="FAQ Hintergrund"
             fill
             style={{ objectFit: 'cover' }}

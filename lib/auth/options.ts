@@ -1,11 +1,10 @@
-import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { prisma } from '@/lib/db/prisma'; // Assuming @ alias is set up for src or lib
 import * as bcrypt from 'bcryptjs';
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+  // adapter: PrismaAdapter(prisma),
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -60,7 +59,8 @@ export const authOptions: NextAuthOptions = {
           email: userFromDb.email ?? undefined,
           image: userFromDb.image ?? undefined,
           emailVerified: userFromDb.emailVerified, // Keep as Date | null
-          isAdmin: userFromDb.isAdmin, // Include isAdmin status
+          role: userFromDb.role, // Include role for RBAC
+          isAdmin: userFromDb.isAdmin, // Keep for backward compatibility
         };
       }
     })
@@ -70,33 +70,33 @@ export const authOptions: NextAuthOptions = {
     strategy: 'jwt', // Use JWT for session strategy (can also be 'database')
   },
   callbacks: {
-    // Include user id AND isAdmin flag in the JWT and session
+    // Include user id, role, and isAdmin flag in the JWT and session
     async jwt({ token, user }) {
       // On initial sign in, user object is available
       if (user) {
         token.id = user.id;
-        // Add isAdmin from the user object fetched by authorize
-        // Need to cast user to include isAdmin as it's not standard NextAuth type
-        token.isAdmin = (user as any).isAdmin; 
+        token.role = (user as any).role;
+        token.isAdmin = (user as any).isAdmin;
       }
       // Subsequent calls will have the token populated from previous calls
       return token;
     },
     async session({ session, token }) {
-      // Add id and isAdmin to the session object from the token
+      // Add id, role, and isAdmin to the session object from the token
       if (token && session.user) {
         session.user.id = token.id as string;
-        session.user.isAdmin = token.isAdmin as boolean; // Add isAdmin to session
+        session.user.role = token.role as any;
+        session.user.isAdmin = token.isAdmin as boolean;
       }
       return session;
     },
   },
   // Specify custom pages if needed
-  // pages: {
-  //   signIn: '/login',
-  //   // error: '/auth/error', // Error code passed in query string as ?error=
-  // },
+  pages: {
+    signIn: '/auth/login',
+    error: '/auth/error',
+  },
   // Debugging
-  // debug: process.env.NODE_ENV === 'development',
-  secret: process.env.NEXTAUTH_SECRET, // Ensure NEXTAUTH_SECRET is set in .env
+  debug: process.env.NODE_ENV === 'development',
+  secret: process.env.NEXTAUTH_SECRET || 'fallback-secret-key-for-development-only', // Ensure NEXTAUTH_SECRET is set in .env
 }; 

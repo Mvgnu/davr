@@ -4,7 +4,11 @@ import React, { useState } from 'react';
 import { useForm, SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 // Define validation schema using Zod
 const registerSchema = z.object({
@@ -19,6 +23,8 @@ export default function RegisterForm() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams?.get('callbackUrl') || '/';
 
   const {
     register,
@@ -61,66 +67,36 @@ export default function RegisterForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       {error && (
-        <div className="p-3 text-center text-red-800 bg-red-100 border border-red-400 rounded-md">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
-      <div>
-        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-          Name (Optional)
-        </label>
-        <input
-          id="name"
-          type="text"
-          {...register('name')}
-          className="block w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-        />
-        {/* No error display for optional field, or add if desired */}
+      <div className="space-y-1.5">
+        <Label htmlFor="name">Name (optional)</Label>
+        <Input id="name" type="text" {...register('name')} />
       </div>
 
-      <div>
-        <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-          Email Address
-        </label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="email"
-          {...register('email')}
-          required
-          className={`block w-full px-3 py-2 mt-1 border ${errors.email ? 'border-red-500' : 'border-gray-300'} rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm`}
-        />
+      <div className="space-y-1.5">
+        <Label htmlFor="email">E-Mail</Label>
+        <Input id="email" type="email" autoComplete="email" {...register('email')} required />
         {errors.email && (
-          <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>
+          <p className="mt-1 text-xs text-destructive">{errors.email.message}</p>
         )}
       </div>
 
-      <div>
-        <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-          Password
-        </label>
-        <input
-          id="password"
-          type="password"
-          autoComplete="new-password"
-          {...register('password')}
-          required
-          className={`block w-full px-3 py-2 mt-1 border ${errors.password ? 'border-red-500' : 'border-gray-300'} rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm`}
-        />
+      <div className="space-y-1.5">
+        <Label htmlFor="password">Passwort</Label>
+        <Input id="password" type="password" autoComplete="new-password" {...register('password')} required />
         {errors.password && (
-          <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>
+          <p className="mt-1 text-xs text-destructive">{errors.password.message}</p>
         )}
       </div>
 
       <div>
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="flex justify-center w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-        >
-          {isLoading ? 'Registering...' : 'Register'}
-        </button>
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          {isLoading ? 'Registrierung läuft...' : 'Registrieren'}
+        </Button>
       </div>
     </form>
   );

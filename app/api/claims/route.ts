@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db/prisma';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 
 // Zod schema for validating claim input
 const claimSchema = z.object({
@@ -13,15 +14,18 @@ const claimSchema = z.object({
     companyName: z.string().optional().nullable(),
     businessRole: z.string().optional().nullable(),
     message: z.string().min(10, 'Message must be at least 10 characters').max(1000, 'Message cannot exceed 1000 characters'),
+    documents: z.array(z.object({
+        url: z.string(),
+        filename: z.string(),
+        size: z.number(),
+        type: z.string(),
+    })).optional().nullable(),
 });
 
 export async function POST(request: NextRequest) {
-    // 1. Check Authentication
+    // 1. Check Authentication (optional - allows non-authenticated claims)
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const userId = session.user.id;
+    const userId = session?.user?.id || null;
 
     try {
         // 2. Validate Request Body
@@ -48,34 +52,49 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'This center is already managed.' }, { status: 409 }); // Conflict
         }
         
-        // 4. Check if user already has a pending claim for this center
+        // 4. Check if user/email already has a pending claim for this center
+        const existingClaimQuery: any = {
+            recycling_center_id: claimData.recyclingCenterId,
+            status: 'pending'
+        };
+
+        if (userId) {
+            existingClaimQuery.user_id = userId;
+        } else {
+            existingClaimQuery.email = claimData.email;
+        }
+
         const existingClaim = await prisma.recyclingCenterClaim.findFirst({
-            where: {
-                recycling_center_id: claimData.recyclingCenterId,
-                user_id: userId,
-                status: 'pending' // Check only for pending claims
-            }
+            where: existingClaimQuery
         });
+
         if (existingClaim) {
-            return NextResponse.json({ error: 'You already have a pending claim for this center.' }, { status: 409 }); // Conflict
+            return NextResponse.json({ error: 'A pending claim already exists for this center with your credentials.' }, { status: 409 });
         }
 
         // 5. Create the Claim
+        const claimDataForDb: any = {
+            recycling_center_id: claimData.recyclingCenterId,
+            user_id: userId,
+            name: claimData.name,
+            email: claimData.email,
+            phone: claimData.phone,
+            companyName: claimData.companyName,
+            businessRole: claimData.businessRole,
+            message: claimData.message,
+            status: 'pending',
+            account_created: false,
+        };
+
+        if (claimData.documents) {
+            claimDataForDb.documents_json = claimData.documents;
+        }
+
         const newClaim = await prisma.recyclingCenterClaim.create({
-            data: {
-                recycling_center_id: claimData.recyclingCenterId,
-                user_id: userId,
-                name: claimData.name,
-                email: claimData.email,
-                phone: claimData.phone,
-                companyName: claimData.companyName,
-                businessRole: claimData.businessRole,
-                message: claimData.message,
-                status: 'pending', // Default status
-            },
+            data: claimDataForDb,
         });
 
-        // TODO: Implement notification system (e.g., email admin)
+        // TODO: Send email notification to admin about new claim
 
         // 6. Return Success Response
         return NextResponse.json({ success: true, data: newClaim }, { status: 201 });

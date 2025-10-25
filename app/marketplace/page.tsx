@@ -27,7 +27,18 @@ interface ListingCardData {
   category?: string;
   location?: string | null;
   created_at: string;
-  user?: { name?: string | undefined }; 
+  user?: { 
+    name?: string | undefined;
+    id?: string;
+  }; 
+  seller?: {
+    id: string;
+    name: string | null;
+    rating?: number | null;
+    reviewCount?: number | null;
+    joinedSince?: Date;
+    totalListings?: number | null;
+  };
 }
 
 // Define types based on API response
@@ -41,7 +52,14 @@ type MarketplaceListingWithRelations = {
   created_at: string; 
   image_url?: string | null;
   material?: { name: string } | null;
-  seller: { id: string; name: string | null };
+  seller: { 
+    id: string; 
+    name: string | null;
+    rating?: number | null;
+    reviewCount?: number | null;
+    memberSince?: number | null;
+    totalActiveListings?: number | null;
+  };
   // We need status and type from API as well for mapping
   status?: string;
   type?: string;
@@ -144,7 +162,19 @@ function MarketplaceClientContent() {
       category: apiListing.material?.name,
       location: apiListing.location,
       created_at: apiListing.created_at,
-      user: { name: apiListing.seller.name ?? undefined }
+      user: { 
+        name: apiListing.seller.name ?? undefined,
+        id: apiListing.seller.id
+      },
+      // Add enhanced seller fields
+      seller: {
+        id: apiListing.seller.id,
+        name: apiListing.seller.name,
+        rating: apiListing.seller.rating,
+        reviewCount: apiListing.seller.reviewCount,
+        joinedSince: apiListing.seller.memberSince ? new Date(apiListing.seller.memberSince, 0, 1) : undefined,
+        totalListings: apiListing.seller.totalActiveListings
+      }
     }));
 
     return (

@@ -1,111 +1,140 @@
 import React from 'react';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db/prisma';
-import Image from 'next/image';
-import Link from 'next/link';
-import { Badge } from '@/components/ui/badge';
-import { Calendar, User, ArrowLeft } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import DOMPurify from 'isomorphic-dompurify';
+import { ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
 
-// Fetch function (can be moved to lib)
-async function getPublishedPostBySlug(slug: string) {
-    if (!slug) {
-        notFound();
-    }
-    try {
-        const now = new Date();
-        const post = await prisma.blogPost.findUnique({
-            where: { 
-                slug: slug, 
-                status: 'published',
-                published_at: { lte: now }
-            },
-            // Select all fields by default
-        });
-
-        if (!post) {
-            notFound(); // Post not found or not published
-        }
-        return post;
-    } catch (error) {
-        console.error(`Error fetching blog post by slug ${slug}:`, error);
-        notFound();
-    }
+interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string;
+  content: string;
+  author_name: string | null;
+  category: string | null;
+  published_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+  status: string;
+  featured: boolean;
+  image_url: string | null;
 }
 
-interface BlogPostPageProps {
-    params: { slug: string };
+async function getBlogPost(slug: string): Promise<BlogPost | null> {
+  try {
+    const post = await prisma.blogPost.findUnique({
+      where: { 
+        slug,
+        status: 'published'
+      },
+    });
+
+    if (!post) {
+      return null;
+    }
+
+    return {
+      id: post.id,
+      title: post.title,
+      slug: post.slug,
+      excerpt: post.excerpt,
+      content: post.content,
+      author_name: post.author_name,
+      category: post.category,
+      published_at: post.published_at,
+      created_at: post.created_at,
+      updated_at: post.updated_at,
+      status: post.status,
+      featured: post.featured,
+      image_url: post.image_url,
+    };
+  } catch (error) {
+    console.error('Error fetching blog post:', error);
+    return null;
+  }
 }
 
-// Optional: Generate Metadata for SEO
-// export async function generateMetadata({ params }: BlogPostPageProps): Promise<Metadata> {
-//     const post = await getPublishedPostBySlug(params.slug);
-//     return {
-//         title: post.title,
-//         description: post.excerpt,
-//         // Add other metadata like open graph tags
-//     };
-// }
+export default async function BlogPostPage({ params }: { params: { slug: string } }) {
+  const post = await getBlogPost(params.slug);
 
-export default async function BlogPostPage({ params }: BlogPostPageProps) {
-    const post = await getPublishedPostBySlug(params.slug);
+  if (!post) {
+    notFound();
+  }
 
-    return (
-        <div className="container mx-auto px-4 py-12 max-w-4xl">
-            {/* Back Link */}
-             <Link 
-                href="/blog" 
-                className="mb-8 inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors duration-200 group"
-            >
-                <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-1 transition-transform duration-200"/> Zurück zum Blog
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="mb-6">
+        <Button variant="outline" asChild>
+          <Link href="/blog">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Zurück zum Blog
+          </Link>
+        </Button>
+      </div>
+
+      <article className="space-y-8">
+        <header className="space-y-4">
+          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+            {post.category && (
+              <span className="px-2 py-1 bg-primary/10 text-primary rounded-full">
+                {post.category}
+              </span>
+            )}
+            <time dateTime={post.published_at?.toISOString() || post.created_at.toISOString()}>
+              {format(post.published_at || post.created_at, 'PPP', { locale: de })}
+            </time>
+            {post.author_name && (
+              <span>Von {post.author_name}</span>
+            )}
+          </div>
+
+          <h1 className="text-4xl font-bold tracking-tight">{post.title}</h1>
+
+          {post.excerpt && (
+            <p className="text-xl text-muted-foreground">
+              {post.excerpt}
+            </p>
+          )}
+        </header>
+
+        {post.image_url && (
+          <div className="rounded-lg overflow-hidden">
+            <img 
+              src={post.image_url} 
+              alt={post.title} 
+              className="w-full h-96 object-cover"
+            />
+          </div>
+        )}
+
+        <div 
+          className="prose prose-lg max-w-none dark:prose-invert"
+          dangerouslySetInnerHTML={{ 
+            __html: DOMPurify.sanitize(post.content) 
+          }}
+        />
+      </article>
+
+      <footer className="mt-12 pt-8 border-t border-border">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="text-sm text-muted-foreground">
+            Zuletzt aktualisiert:{' '}
+            <time dateTime={post.updated_at.toISOString()}>
+              {format(post.updated_at, 'PPP', { locale: de })}
+            </time>
+          </div>
+          <Button variant="outline" asChild>
+            <Link href="/blog">
+              Mehr Blog-Beiträge
             </Link>
-
-            <article>
-                {/* Header Section */}
-                <header className="mb-8">
-                    {post.category && (
-                        <Badge variant="secondary" className="mb-2">{post.category}</Badge>
-                    )}
-                    <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-3">{post.title}</h1>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                         <div className="flex items-center gap-1.5">
-                             <User className="h-4 w-4" />
-                             <span>{post.author_name || 'Unbekannt'}</span>
-                         </div>
-                         {post.published_at && (
-                            <div className="flex items-center gap-1.5">
-                                <Calendar className="h-4 w-4" />
-                                <time dateTime={post.published_at.toISOString()}>
-                                    {format(post.published_at, 'PPP', { locale: de })}
-                                </time>
-                            </div>
-                         )}
-                    </div>
-                </header>
-
-                {/* Featured Image */}
-                {post.image_url && (
-                    <div className="relative w-full h-64 md:h-96 mb-8 rounded-lg overflow-hidden shadow-lg">
-                        <Image
-                            src={post.image_url}
-                            alt={post.title}
-                            fill
-                            style={{ objectFit: 'cover' }}
-                            priority
-                        />
-                    </div>
-                )}
-
-                {/* Post Content - Rendered using ReactMarkdown */}
-                <div className="prose prose-lg dark:prose-invert max-w-none">
-                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                       {post.content} 
-                   </ReactMarkdown>
-                </div>
-            </article>
+          </Button>
         </div>
-    );
-} 
+      </footer>
+    </div>
+  );
+}
