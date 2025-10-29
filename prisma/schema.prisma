@@ -35,23 +35,27 @@ model Session {
 }
 
 model User {
-  id               String                 @id @default(cuid())
-  name             String?
-  email            String?                @unique
-  emailVerified    DateTime?
-  password         String?
-  image            String?
-  role             UserRole               @default(USER)
-  isAdmin          Boolean                @default(false) // Deprecated: use role field
-  created_at       DateTime               @default(now())
-  updated_at       DateTime               @updatedAt
-  accounts         Account[]
-  listings         MarketplaceListing[]
-  recyclingCenters RecyclingCenter[]
-  claims           RecyclingCenterClaim[]
-  reviewedClaims   RecyclingCenterClaim[] @relation("ClaimReviewer")
-  reviews          Review[]
-  sessions         Session[]
+  id                    String                     @id @default(cuid())
+  name                  String?
+  email                 String?                    @unique
+  emailVerified         DateTime?
+  password              String?
+  image                 String?
+  role                  UserRole                   @default(USER)
+  isAdmin               Boolean                    @default(false) // Deprecated: use role field
+  created_at            DateTime                   @default(now())
+  updated_at            DateTime                   @updatedAt
+  accounts              Account[]
+  listings              MarketplaceListing[]
+  recyclingCenters      RecyclingCenter[]
+  claims                RecyclingCenterClaim[]
+  reviewedClaims        RecyclingCenterClaim[]     @relation("ClaimReviewer")
+  reviews               Review[]
+  sessions              Session[]
+  buyerNegotiations     Negotiation[]              @relation("BuyerNegotiations")
+  sellerNegotiations    Negotiation[]              @relation("SellerNegotiations")
+  offerCounters         OfferCounter[]
+  negotiationStatusLogs NegotiationStatusHistory[]
 
   @@index([role])
 }
@@ -143,21 +147,23 @@ model RecyclingCenterOffer {
 }
 
 model MarketplaceListing {
-  id          String        @id @default(cuid())
-  title       String
-  description String?
-  quantity    Float?
-  unit        String?
-  location    String?
-  created_at  DateTime      @default(now())
-  updated_at  DateTime      @updatedAt
-  material_id String?
-  seller_id   String
-  image_url   String?
-  status      ListingStatus @default(PENDING)
-  type        ListingType   @default(SELL)
-  material    Material?     @relation(fields: [material_id], references: [id])
-  seller      User          @relation(fields: [seller_id], references: [id], onDelete: Cascade)
+  id                String        @id @default(cuid())
+  title             String
+  description       String?
+  quantity          Float?
+  unit              String?
+  location          String?
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+  material_id       String?
+  seller_id         String
+  image_url         String?
+  status            ListingStatus @default(PENDING)
+  type              ListingType   @default(SELL)
+  material          Material?     @relation(fields: [material_id], references: [id])
+  seller            User          @relation(fields: [seller_id], references: [id], onDelete: Cascade)
+  isPremiumWorkflow Boolean       @default(false)
+  negotiations      Negotiation[]
 
   @@index([seller_id])
   @@index([material_id])
@@ -259,6 +265,114 @@ model Message {
   updated_at      DateTime @updatedAt
 }
 
+model Negotiation {
+  id             String                     @id @default(cuid())
+  listingId      String
+  buyerId        String
+  sellerId       String
+  status         NegotiationStatus          @default(INITIATED)
+  initiatedAt    DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  expiresAt      DateTime?
+  agreedPrice    Float?
+  agreedQuantity Float?
+  currency       String                     @default("EUR")
+  notes          String?
+  listing        MarketplaceListing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer          User                       @relation("BuyerNegotiations", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller         User                       @relation("SellerNegotiations", fields: [sellerId], references: [id], onDelete: Cascade)
+  offers         OfferCounter[]
+  statusHistory  NegotiationStatusHistory[]
+  contract       DealContract?
+  escrowAccount  EscrowAccount?
+
+  @@index([listingId])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+model OfferCounter {
+  id            String      @id @default(cuid())
+  negotiationId String
+  senderId      String
+  price         Float?
+  quantity      Float?
+  message       String?
+  type          OfferType   @default(COUNTER)
+  createdAt     DateTime    @default(now())
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  sender        User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([negotiationId])
+  @@index([senderId])
+  @@index([type])
+}
+
+model NegotiationStatusHistory {
+  id            String            @id @default(cuid())
+  negotiationId String
+  status        NegotiationStatus
+  note          String?
+  createdById   String?
+  createdAt     DateTime          @default(now())
+  negotiation   Negotiation       @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  createdBy     User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([negotiationId])
+  @@index([status])
+  @@index([createdById])
+}
+
+model DealContract {
+  id             String         @id @default(cuid())
+  negotiationId  String         @unique
+  status         ContractStatus @default(DRAFT)
+  draftTerms     String?
+  documentUrl    String?
+  buyerSignedAt  DateTime?
+  sellerSignedAt DateTime?
+  finalizedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  negotiation    Negotiation    @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+model EscrowAccount {
+  id                String              @id @default(cuid())
+  negotiationId     String              @unique
+  providerReference String?
+  status            EscrowStatus        @default(PENDING_SETUP)
+  currency          String              @default("EUR")
+  expectedAmount    Float?
+  fundedAmount      Float               @default(0)
+  releasedAmount    Float               @default(0)
+  refundedAmount    Float               @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  negotiation       Negotiation         @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  transactions      EscrowTransaction[]
+
+  @@index([status])
+}
+
+model EscrowTransaction {
+  id              String                @id @default(cuid())
+  escrowAccountId String
+  type            EscrowTransactionType
+  amount          Float
+  occurredAt      DateTime              @default(now())
+  reference       String?
+  metadata        Json?
+  escrowAccount   EscrowAccount         @relation(fields: [escrowAccountId], references: [id], onDelete: Cascade)
+
+  @@index([escrowAccountId])
+  @@index([type])
+  @@index([occurredAt])
+}
+
 enum ListingType {
   BUY
   SELL
@@ -270,6 +384,50 @@ enum ListingStatus {
   PENDING
   REJECTED
   FLAGGED
+}
+
+enum NegotiationStatus {
+  INITIATED
+  COUNTERING
+  AGREED
+  CONTRACT_DRAFTING
+  CONTRACT_SIGNED
+  ESCROW_FUNDED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum OfferType {
+  INITIAL
+  COUNTER
+  FINAL
+  SYSTEM
+}
+
+enum ContractStatus {
+  DRAFT
+  PENDING_SIGNATURES
+  SIGNED
+  REJECTED
+  VOID
+}
+
+enum EscrowStatus {
+  PENDING_SETUP
+  AWAITING_FUNDS
+  FUNDED
+  RELEASED
+  REFUNDED
+  DISPUTED
+  CLOSED
+}
+
+enum EscrowTransactionType {
+  FUND
+  RELEASE
+  REFUND
+  ADJUSTMENT
 }
 
 enum DayOfWeek {

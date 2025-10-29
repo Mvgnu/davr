@@ -64,6 +64,12 @@ This document tracks the development progress, outlines completed tasks, and def
     *   **Functionality:** Verified that the existing structure correctly implements filtering. The `CenterFilters` component updates URL search parameters, and the `RecyclingCentersPage` server component re-fetches data based on these parameters. API route handles city, material, and general search filters.
     *   **Plan:** `docs/plans/recycling-center-filter-search.md`.
 *   `[Timestamp]` - **Task: Implement Edit/Delete Marketplace Listing Functionality.**
+*   `2024-05-16` - **Task: Launch Negotiation & Escrow Foundations.**
+    *   **Status:** Completed.
+    *   **Files Created:** `docs/plans/marketplace-deals.md`, `docs/backend/marketplace-deals.md`, `docs/frontend/marketplace-deals.md`, `docs/backend/integrations/escrow.md`, `app/api/marketplace/deals/route.ts`, `app/api/marketplace/deals/README.md`, `lib/integrations/escrow.ts`, `lib/integrations/README.md`.
+    *   **Files Updated:** `prisma/schema.prisma`, `lib/api/validation.ts`, `docs/backend/README.md`, `docs/frontend/README.md`, `docs/progress_tracker.md`.
+    *   **Functionality:** Added Prisma models/enums for negotiations, offers, contracts, and escrow accounts. Implemented POST endpoint to start negotiations with validation, duplicate checks, and transactional creation of related records. Introduced integration abstraction for escrow providers and documented backend/frontend plans.
+    *   **Plan:** `docs/plans/marketplace-deals.md`.
 *   `[Timestamp]` - **Task: Implement Materials List & Detail Pages.**
     *   **Status:** Completed.
     *   **Files Created:** `app/materials/page.tsx`, `app/api/materials/[slug]/route.ts`, `app/materials/[slug]/page.tsx`, `docs/backend/materials/README.md`.

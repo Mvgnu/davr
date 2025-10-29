@@ -27,6 +27,7 @@ Detailed documentation for complex components or feature-specific UI modules res
 *   [Authentication UI](./auth/README.md) (Example - To be created)
 *   [Layout & Navigation](./layout/README.md)
 *   [Recycling Centers Display](./recycling-centers/README.md)
+*   [Marketplace Deals UI](./marketplace-deals.md)
 
 ## State Management
 

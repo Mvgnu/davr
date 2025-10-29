@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ListingType, ListingStatus, VerificationStatus } from '@prisma/client';
+import { ListingType, ListingStatus, VerificationStatus, OfferType } from '@prisma/client';
 
 /**
  * Common validation schemas for API endpoints
@@ -90,6 +90,38 @@ export const centerOfferSchema = z.object({
 });
 
 export type CenterOfferInput = z.infer<typeof centerOfferSchema>;
+
+// Negotiation creation validation
+export const createNegotiationSchema = z.object({
+  listingId: z.string().cuid('Ungültige Listing-ID'),
+  initialOfferPrice: z
+    .number({ invalid_type_error: 'Preis muss eine Zahl sein' })
+    .positive('Preis muss positiv sein'),
+  initialOfferQuantity: z
+    .number({ invalid_type_error: 'Menge muss eine Zahl sein' })
+    .positive('Menge muss positiv sein')
+    .optional(),
+  message: z.string().max(1000).optional(),
+  expiresAt: z.coerce.date().optional(),
+  currency: z.string().max(3).default('EUR'),
+});
+
+export type CreateNegotiationInput = z.infer<typeof createNegotiationSchema>;
+
+export const offerCounterSchema = z.object({
+  price: z
+    .number({ invalid_type_error: 'Preis muss eine Zahl sein' })
+    .positive('Preis muss positiv sein')
+    .optional(),
+  quantity: z
+    .number({ invalid_type_error: 'Menge muss eine Zahl sein' })
+    .positive('Menge muss positiv sein')
+    .optional(),
+  message: z.string().max(1000).optional(),
+  type: z.nativeEnum(OfferType).optional(),
+});
+
+export type OfferCounterInput = z.infer<typeof offerCounterSchema>;
 
 // Review creation validation
 export const createReviewSchema = z.object({

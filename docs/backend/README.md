@@ -25,7 +25,7 @@ API endpoints are implemented using Next.js API Routes within the `/app/api/` di
 
 *   [Authentication API](./auth/README.md) (`/app/api/auth/...`)
 *   [Users API](./users/README.md) (`/app/api/users/...` - Example)
-*   [Items API](./items/README.md) (`/app/api/items/...` - Example)
+*   [Marketplace Deals API](./marketplace-deals.md) (`/app/api/marketplace/deals`)
 *   [Recycling Centers API](./recycling-centers/README.md) (`/app/api/recycling-centers/...`)
 
 ## Database
