@@ -135,11 +135,11 @@ export async function POST(
           contract: {
             upsert: {
               create: {
-                status: ContractStatus.DRAFT,
+                status: ContractStatus.PENDING_SIGNATURES,
                 draftTerms: validation.data.note ?? null,
               },
               update: {
-                status: ContractStatus.DRAFT,
+                status: ContractStatus.PENDING_SIGNATURES,
                 draftTerms: validation.data.note ?? undefined,
               },
             },
@@ -177,6 +177,17 @@ export async function POST(
       payload: {
         price: finalPrice,
         quantity: finalQuantity,
+      },
+    });
+
+    await publishNegotiationEvent({
+      type: 'CONTRACT_SIGNATURE_REQUESTED',
+      negotiationId: negotiation.id,
+      triggeredBy: session.user.id,
+      status: negotiation.status,
+      payload: {
+        requiresBuyerSignature: true,
+        requiresSellerSignature: true,
       },
     });
 

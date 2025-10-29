@@ -1,39 +1,77 @@
 # Marketplace Deals Frontend
 
-UI work for negotiations and escrow is staged. This document tracks the planned components and integration points introduced by the new backend primitives.
+The negotiation workspace is now live on listing detail pages. This document summarises the components, data flow, and admin
+console that ship with the first iteration.
 
-## Planned Components
+## Workspace Components
 
+* `components/marketplace/deals/NegotiationWorkspace.tsx`
+  * Client orchestrator that renders the timeline, contract status, offer composer, and escrow ledger widgets.
+  * Bootstraps negotiations via `/api/marketplace/deals` and hydrates data with the SWR hook (`useNegotiationWorkspace`).
 * `components/marketplace/deals/NegotiationTimeline.tsx`
-  * Visualises status history and offer exchanges.
-  * Consumes `/api/marketplace/deals/[id]` once implemented.
-* `components/marketplace/deals/OfferComposer.tsx`
-  * Provides form inputs for counter-offers and acceptance flows.
-  * Validates payloads using shared Zod schemas (`offerCounterSchema`, `acceptNegotiationSchema`).
+  * Merges `negotiation.activities` and `statusHistory` into a chronological list.
+  * Highlights SLA warnings (`NEGOTIATION_SLA_WARNING`, `NEGOTIATION_SLA_BREACHED`) with amber/destructive badges.
+* `components/marketplace/deals/NegotiationOfferComposer.tsx`
+  * Handles counter and acceptance flows with optimistic updates and form validation.
   * Dispatches to `/api/marketplace/deals/[id]/offers` and `/api/marketplace/deals/[id]/accept`.
 * `components/marketplace/deals/EscrowStatusCard.tsx`
-  * Highlights funding requirements and escrow activity.
+  * Visualises expected vs. funded balances and transaction history from the ledger payload.
+* `components/marketplace/deals/NegotiationContractCard.tsx`
+  * Surfaces signature state, pending steps, and calls the signing stub at `/api/marketplace/deals/[id]/contracts/sign`.
 
 ## Listing Detail Integration
 
-* Extend `app/marketplace/listings/[id]/page.tsx` to:
-  * Surface a “Start Negotiation” CTA for authenticated buyers.
-  * Render negotiation widgets when a negotiation is active.
-  * Display seller safeguards (verification, escrow requirement).
+`app/marketplace/listings/[listingId]/page.tsx` now:
 
-## Admin Oversight
+* Pre-loads the latest negotiation for the current user (buyer or seller) and passes it to the workspace.
+* Renders a “Verhandlung starten” card for authenticated buyers without an active negotiation.
+* Displays the interactive workspace with role-aware CTAs, escrow ledger, and contract progress.
 
-* Add `/app/admin/deals/page.tsx` to monitor pipeline health using the new GET endpoint.
-* Provide filters for status, material, and deal value and surface escrow status badges (`AWAITING_FUNDS`, `FUNDED`, `REFUNDED`).
+### API Snapshot
 
-## Dependencies
+`GET /api/marketplace/deals/{id}` returns the negotiation snapshot and KPI envelope:
 
-* Reuse design tokens from existing marketplace components for consistent styling.
-* Integrate analytics badges from the forthcoming intelligence engine for contextual guidance.
+```json
+{
+  "negotiation": {
+    "id": "neg_123",
+    "status": "CONTRACT_DRAFTING",
+    "offers": [/* latest 25 offers */],
+    "activities": [/* persisted lifecycle events */],
+    "escrowAccount": {
+      "expectedAmount": 12500,
+      "fundedAmount": 7500,
+      "transactions": [/* ledger entries */]
+    },
+    "contract": {
+      "status": "PENDING_SIGNATURES",
+      "buyerSignedAt": null,
+      "sellerSignedAt": "2025-10-29T15:20:00.000Z"
+    }
+  },
+  "kpis": {
+    "premiumWorkflow": true,
+    "escrowFundedRatio": 0.6,
+    "completed": false
+  }
+}
+```
 
-## Next Steps
+## Admin Oversight Console
 
-* Scaffold `components/marketplace/deals` directory with Storybook stories for each widget.
-* Implement SWR hooks for negotiation polling against `GET /api/marketplace/deals/[id]` before real-time messaging lands.
-* Connect component actions to the new API endpoints (counter, accept, cancel, escrow mutations).
-* Add optimistic UI states for escrow operations using the ledger response payloads.
+`/app/admin/deals/page.tsx` lists the 50 most recent negotiations with filters for lifecycle status, SLA risk buckets (24h risk,
+breached), and premium vs. standard workflows. Summary cards include active negotiation count, escrow volume, and SLA risk
+count. Each row shows the escrow balance, premium badge, and last activity timestamp.
+
+## Telemetry Notes
+
+* Workspace components rely on `useNegotiationWorkspace`, which polls every 15s and applies optimistic updates for counter and
+  signing flows.
+* KPI data is included in the API response for downstream analytics (completion, escrow funding ratio, premium flag) and is
+  surfaced in the admin dashboard.
+
+## Follow-ups
+
+* Wire the SLA watchdog job (`lib/jobs/negotiations/sla.ts`) into a scheduled worker to emit warnings proactively.
+* Replace optimistic polling with websocket updates once the messaging service lands.
+* Capture screenshot assets for the design system once visual QA is finalised.

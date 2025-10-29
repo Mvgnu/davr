@@ -1,6 +1,7 @@
 import { EscrowStatus, NegotiationStatus, Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/db/prisma';
+import { publishNegotiationEvent } from '@/lib/events/negotiations';
 
 export const TERMINAL_NEGOTIATION_STATUSES: NegotiationStatus[] = [
   NegotiationStatus.CANCELLED,
@@ -17,10 +18,14 @@ export const NEGOTIATION_DETAIL_INCLUDE = {
     orderBy: { createdAt: 'desc' as const },
     take: 25,
   },
+  activities: {
+    orderBy: { occurredAt: 'desc' as const },
+    take: 50,
+  },
   escrowAccount: true,
   contract: true,
   listing: {
-    select: { id: true, title: true, seller_id: true },
+    select: { id: true, title: true, seller_id: true, isPremiumWorkflow: true },
   },
 } satisfies Prisma.NegotiationInclude;
 
@@ -109,6 +114,16 @@ export async function getNegotiationWithAccess(
           data: { status: EscrowStatus.CLOSED },
         });
       }
+    });
+
+    await publishNegotiationEvent({
+      type: 'NEGOTIATION_SLA_BREACHED',
+      negotiationId: negotiation.id,
+      triggeredBy: null,
+      status: NegotiationStatus.EXPIRED,
+      payload: {
+        expiresAt: negotiation.expiresAt?.toISOString() ?? null,
+      },
     });
 
     throw new NegotiationAccessError(

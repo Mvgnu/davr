@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { NegotiationWorkspace } from '@/components/marketplace/deals/NegotiationWorkspace';
 import { 
     ArrowLeft, 
     Edit, 
@@ -64,6 +65,20 @@ export default async function ListingDetailPage({ params }: ListingDetailPagePro
     const { listingId } = params;
     const listing = await getListing(listingId);
     const session = await getServerSession(authOptions);
+
+    const existingNegotiation = session?.user?.id
+        ? await prisma.negotiation.findFirst({
+              where: {
+                  listingId,
+                  OR: [
+                      { buyerId: session.user.id },
+                      { sellerId: session.user.id },
+                  ],
+              },
+              orderBy: { updatedAt: 'desc' },
+              select: { id: true },
+          })
+        : null;
 
     // Calculate seller metrics
     const userRating = await calculateUserRating(listing.seller.id);
@@ -283,6 +298,14 @@ export default async function ListingDetailPage({ params }: ListingDetailPagePro
                             </div>
                         </CardContent>
                     </Card>
+
+                    <NegotiationWorkspace
+                        listingId={listing.id}
+                        listingTitle={listing.title}
+                        sellerId={listing.seller.id}
+                        initialNegotiationId={existingNegotiation?.id ?? null}
+                        currency="EUR"
+                    />
                 </div>
             </div>
         </div>
