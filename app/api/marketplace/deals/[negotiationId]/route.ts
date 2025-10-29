@@ -28,7 +28,18 @@ export async function GET(
       { isAdmin: resolveAdminFlag(session.user) }
     );
 
-    return NextResponse.json({ negotiation: result.negotiation });
+    const escrow = result.negotiation.escrowAccount;
+    const expected = escrow?.expectedAmount ?? 0;
+    const funded = escrow?.fundedAmount ?? 0;
+
+    return NextResponse.json({
+      negotiation: result.negotiation,
+      kpis: {
+        premiumWorkflow: Boolean(result.negotiation.listing?.isPremiumWorkflow),
+        escrowFundedRatio: expected > 0 ? Number((funded / expected).toFixed(2)) : funded > 0 ? 1 : 0,
+        completed: result.negotiation.status === 'COMPLETED',
+      },
+    });
   } catch (error) {
     if (error instanceof NegotiationAccessError) {
       return NextResponse.json(

@@ -56,6 +56,7 @@ model User {
   sellerNegotiations    Negotiation[]              @relation("SellerNegotiations")
   offerCounters         OfferCounter[]
   negotiationStatusLogs NegotiationStatusHistory[]
+  NegotiationActivity   NegotiationActivity[]
 
   @@index([role])
 }
@@ -266,25 +267,26 @@ model Message {
 }
 
 model Negotiation {
-  id             String                     @id @default(cuid())
-  listingId      String
-  buyerId        String
-  sellerId       String
-  status         NegotiationStatus          @default(INITIATED)
-  initiatedAt    DateTime                   @default(now())
-  updatedAt      DateTime                   @updatedAt
-  expiresAt      DateTime?
-  agreedPrice    Float?
-  agreedQuantity Float?
-  currency       String                     @default("EUR")
-  notes          String?
-  listing        MarketplaceListing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  buyer          User                       @relation("BuyerNegotiations", fields: [buyerId], references: [id], onDelete: Cascade)
-  seller         User                       @relation("SellerNegotiations", fields: [sellerId], references: [id], onDelete: Cascade)
-  offers         OfferCounter[]
-  statusHistory  NegotiationStatusHistory[]
-  contract       DealContract?
-  escrowAccount  EscrowAccount?
+  id                  String                     @id @default(cuid())
+  listingId           String
+  buyerId             String
+  sellerId            String
+  status              NegotiationStatus          @default(INITIATED)
+  initiatedAt         DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  expiresAt           DateTime?
+  agreedPrice         Float?
+  agreedQuantity      Float?
+  currency            String                     @default("EUR")
+  notes               String?
+  listing             MarketplaceListing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer               User                       @relation("BuyerNegotiations", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller              User                       @relation("SellerNegotiations", fields: [sellerId], references: [id], onDelete: Cascade)
+  offers              OfferCounter[]
+  statusHistory       NegotiationStatusHistory[]
+  contract            DealContract?
+  escrowAccount       EscrowAccount?
+  NegotiationActivity NegotiationActivity[]
 
   @@index([listingId])
   @@index([buyerId])
@@ -322,6 +324,27 @@ model NegotiationStatusHistory {
   @@index([negotiationId])
   @@index([status])
   @@index([createdById])
+}
+
+model NegotiationActivity {
+  id            String                      @id @default(cuid())
+  negotiationId String
+  type          NegotiationActivityType
+  audience      NegotiationActivityAudience @default(PARTICIPANTS)
+  status        NegotiationStatus?
+  label         String
+  description   String?
+  payload       Json?
+  triggeredById String?
+  occurredAt    DateTime                    @default(now())
+  createdAt     DateTime                    @default(now())
+  negotiation   Negotiation                 @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  triggeredBy   User?                       @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+
+  @@index([negotiationId])
+  @@index([type])
+  @@index([audience])
+  @@index([status])
 }
 
 model DealContract {
@@ -428,6 +451,26 @@ enum EscrowTransactionType {
   RELEASE
   REFUND
   ADJUSTMENT
+}
+
+enum NegotiationActivityType {
+  NEGOTIATION_CREATED
+  NEGOTIATION_COUNTER_SUBMITTED
+  NEGOTIATION_ACCEPTED
+  NEGOTIATION_CANCELLED
+  ESCROW_FUNDED
+  ESCROW_RELEASED
+  ESCROW_REFUNDED
+  NEGOTIATION_SLA_WARNING
+  NEGOTIATION_SLA_BREACHED
+  CONTRACT_SIGNATURE_REQUESTED
+  CONTRACT_SIGNATURE_COMPLETED
+}
+
+enum NegotiationActivityAudience {
+  PARTICIPANTS
+  ADMIN
+  ALL
 }
 
 enum DayOfWeek {

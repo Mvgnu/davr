@@ -1,6 +1,7 @@
 # Marketplace Deals Backend
 
-The deals API introduces structured negotiations, contract scaffolding, and escrow placeholders to advance the marketplace from lead generation to transaction completion.
+The deals API introduces structured negotiations, contract scaffolding, escrow orchestration, and persisted activity streams to
+advance the marketplace from lead generation to transaction completion.
 
 ## `POST /api/marketplace/deals`
 
@@ -50,8 +51,11 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
 
 ## `GET /api/marketplace/deals/[id]`
 
-* **Description:** Returns the current negotiation aggregate (offers, status history, escrow ledger) for the buyer, seller, or administrators.
+* **Description:** Returns the current negotiation aggregate (offers, status history, escrow ledger, activities) plus KPI
+  metadata for the buyer, seller, or administrators.
 * **Authentication:** Required. Only parties to the negotiation or admins receive access.
+* **Success Response:** Includes a `kpis` object with `premiumWorkflow`, `escrowFundedRatio`, and `completed` flags in addition to
+  the `negotiation` payload.
 * **Error Codes:**
   * `UNAUTHENTICATED`: Session missing.
   * `NEGOTIATION_NOT_FOUND`: Negotiation ID invalid.
@@ -71,6 +75,7 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
     "type": "COUNTER"
   }
   ```
+* **Side Effects:** Persists an activity entry (`NEGOTIATION_COUNTER_SUBMITTED`) and appends the offer to `Negotiation.activities`.
 * **Error Codes:**
   * `NEGOTIATION_CLOSED`: Negotiation already completed/cancelled.
   * `NEGOTIATION_STATUS_INVALID`: Current status forbids new counters.
@@ -78,7 +83,8 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
 
 ## `POST /api/marketplace/deals/[id]/accept`
 
-* **Description:** Accept the latest counter-offer. Captures the agreed price/quantity, begins contract drafting, and flips escrow to `AWAITING_FUNDS`.
+* **Description:** Accept the latest counter-offer. Captures the agreed price/quantity, begins contract drafting, and flips escrow
+  to `AWAITING_FUNDS`.
 * **Authentication:** Required. Opposing party only (cannot accept your own offer).
 * **Request Body:**
   ```json
@@ -88,12 +94,29 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
     "note": "Draft contract with staged pickup clause."
   }
   ```
+* **Side Effects:**
+  * Creates an `OfferCounter` record flagged as `FINAL`.
+  * Upserts the `DealContract` row (status `PENDING_SIGNATURES`) and primes escrow with the new amount expectation.
+  * Emits `NEGOTIATION_ACCEPTED` and `CONTRACT_SIGNATURE_REQUESTED` activities.
 * **Error Codes:**
   * `NEGOTIATION_NO_OFFER`: No offer exists to accept.
   * `NEGOTIATION_PRICE_REQUIRED`: Final price missing.
-* **Side Effects:**
-  * Creates a `OfferCounter` record flagged as `FINAL`.
-  * Upserts the `DealContract` row and primes escrow with the new amount expectation.
+
+## `POST /api/marketplace/deals/[id]/contracts/sign`
+
+* **Description:** Mock signing endpoint capturing buyer/seller signature intent so the UI can progress to the “Pending
+  Signatures” step.
+* **Authentication:** Required. Buyer, seller, or admin.
+* **Request Body:**
+  ```json
+  {
+    "intent": "BUYER"
+  }
+  ```
+* **Behavior:**
+  * Marks the relevant signature timestamp and appends status history notes.
+  * When both parties are signed, transitions the negotiation to `CONTRACT_SIGNED` and emits `CONTRACT_SIGNATURE_COMPLETED`.
+  * Otherwise, re-emits `CONTRACT_SIGNATURE_REQUESTED` to keep downstream notifications in sync.
 
 ## `POST /api/marketplace/deals/[id]/cancel`
 
@@ -108,10 +131,12 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
 * **Behavior:**
   * Refunds any outstanding escrow funds via `EscrowTransaction` entries.
   * Adds a cancellation note to `NegotiationStatusHistory` and persists the message to `Negotiation.notes`.
+  * Emits `NEGOTIATION_CANCELLED` activity for audit trails.
 
 ## `POST /api/marketplace/deals/[id]/escrow/fund`
 
-* **Description:** Records escrow deposits and transitions the negotiation to `ESCROW_FUNDED` once the expected amount is collected.
+* **Description:** Records escrow deposits and transitions the negotiation to `ESCROW_FUNDED` once the expected amount is
+  collected.
 * **Authentication:** Required. Buyer, seller, or admin.
 * **Request Body:**
   ```json
@@ -120,6 +145,7 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
     "reference": "wire-123"
   }
   ```
+* **Side Effects:** Updates escrow ledger, adjusts negotiation status, and emits `ESCROW_FUNDED` or partial funding activities.
 * **Error Codes:**
   * `ESCROW_NOT_INITIALISED`: Negotiation missing an escrow account.
   * `NEGOTIATION_STATUS_INVALID`: Funding attempted from an unsupported lifecycle stage.
@@ -133,16 +159,25 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
 
 ## `POST /api/marketplace/deals/[id]/escrow/refund`
 
-* **Description:** Issues partial or full refunds back to the buyer. Fully refunded negotiations auto-transition to `CANCELLED` and close the escrow account.
+* **Description:** Issues partial or full refunds back to the buyer. Fully refunded negotiations auto-transition to `CANCELLED`
+  and close the escrow account.
 * **Authentication:** Required. Buyer, seller, or admin.
 * **Error Codes:**
   * `ESCROW_REFUND_EXCEEDS_FUNDS`: Refund amount greater than remaining escrow balance.
+
+## Activity & SLA Jobs
+
+* `lib/events/negotiations.ts` now persists every lifecycle event to `NegotiationActivity` and forwards payloads to the queue
+  stub for future downstream messaging.
+* `lib/jobs/negotiations/sla.ts` scans negotiations approaching expiry and emits `NEGOTIATION_SLA_WARNING`/`NEGOTIATION_SLA_BREACHED`
+  events to feed the workspace timeline and admin console.
 
 ## Prisma Models
 
 * `Negotiation`: Tracks listing, buyer/seller pair, statuses, agreed terms, and metadata.
 * `OfferCounter`: Stores negotiation messages and offer payloads.
 * `NegotiationStatusHistory`: Time-series log of status transitions.
+* `NegotiationActivity`: Persisted event stream powering the workspace timeline and admin feed.
 * `DealContract`: Placeholder for structured contract drafting/signature workflow.
 * `EscrowAccount`: Mirrors escrow account state and expected funds.
 * `EscrowTransaction`: Ledger for escrow fund, release, and refund events.
@@ -154,9 +189,11 @@ The deals API introduces structured negotiations, contract scaffolding, and escr
 * `ContractStatus`: Tracks contract drafting and signature phases.
 * `EscrowStatus`: Monitors escrow readiness, funding, release, and dispute states.
 * `EscrowTransactionType`: Categorises escrow ledger events.
+* `NegotiationActivityType`: Enumerates persisted timeline events (creation, counters, signatures, SLA warnings).
+* `NegotiationActivityAudience`: Marks activity visibility (participants vs. admin).
 
 ## Next Steps
 
 * Wire actual messaging/queue integrations to consume the new domain events (`lib/events/negotiations.ts`).
-* Expand SLA handling to notify participants before automatic expiration kicks in.
-* Implement contract signature webhooks so the lifecycle can advance from `CONTRACT_DRAFTING` to `CONTRACT_SIGNED`.
+* Expand SLA handling to notify participants before automatic expiration kicks in (scheduler integration required).
+* Implement contract signature webhooks so the lifecycle can advance from `CONTRACT_DRAFTING` to `CONTRACT_SIGNED` without manual calls.

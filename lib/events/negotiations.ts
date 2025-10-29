@@ -1,4 +1,12 @@
-import { NegotiationStatus } from '@prisma/client';
+import {
+  NegotiationActivityAudience,
+  NegotiationActivityType,
+  NegotiationStatus,
+} from '@prisma/client';
+
+import { prisma } from '@/lib/db/prisma';
+
+import { enqueueNegotiationLifecycleEvent } from './queue';
 
 /**
  * meta: module=negotiation-events version=0.2 owner=platform
@@ -12,7 +20,11 @@ export type NegotiationEventType =
   | 'NEGOTIATION_CANCELLED'
   | 'ESCROW_FUNDED'
   | 'ESCROW_RELEASED'
-  | 'ESCROW_REFUNDED';
+  | 'ESCROW_REFUNDED'
+  | 'NEGOTIATION_SLA_WARNING'
+  | 'NEGOTIATION_SLA_BREACHED'
+  | 'CONTRACT_SIGNATURE_REQUESTED'
+  | 'CONTRACT_SIGNATURE_COMPLETED';
 
 export interface NegotiationDomainEvent {
   type: NegotiationEventType;
@@ -23,13 +35,159 @@ export interface NegotiationDomainEvent {
   occurredAt?: Date;
 }
 
+export interface NegotiationEventHandlerContext {
+  audience: NegotiationActivityAudience;
+  activityType: NegotiationActivityType;
+  label: string;
+  description?: string | null;
+}
+
+type NegotiationEventHandler = (
+  event: NegotiationDomainEvent & { occurredAt: Date },
+  context: NegotiationEventHandlerContext
+) => Promise<void> | void;
+
+const negotiationEventHandlers = new Set<NegotiationEventHandler>();
+
+export function registerNegotiationEventHandler(handler: NegotiationEventHandler) {
+  negotiationEventHandlers.add(handler);
+}
+
+function resolveEventContext(
+  event: NegotiationDomainEvent
+): NegotiationEventHandlerContext {
+  switch (event.type) {
+    case 'NEGOTIATION_CREATED':
+      return {
+        audience: NegotiationActivityAudience.PARTICIPANTS,
+        activityType: NegotiationActivityType.NEGOTIATION_CREATED,
+        label: 'Verhandlung gestartet',
+        description: 'Käufer hat eine neue Verhandlung initiiert.',
+      };
+    case 'NEGOTIATION_COUNTER_SUBMITTED':
+      return {
+        audience: NegotiationActivityAudience.PARTICIPANTS,
+        activityType: NegotiationActivityType.NEGOTIATION_COUNTER_SUBMITTED,
+        label: 'Neues Gegenangebot',
+        description: 'Ein neues Angebot wurde eingereicht.',
+      };
+    case 'NEGOTIATION_ACCEPTED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.NEGOTIATION_ACCEPTED,
+        label: 'Verhandlung akzeptiert',
+        description: 'Parteien haben sich auf die Konditionen geeinigt.',
+      };
+    case 'NEGOTIATION_CANCELLED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.NEGOTIATION_CANCELLED,
+        label: 'Verhandlung abgebrochen',
+        description: 'Eine Partei hat die Verhandlung beendet.',
+      };
+    case 'ESCROW_FUNDED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.ESCROW_FUNDED,
+        label: 'Treuhandkonto finanziert',
+        description: 'Zahlung wurde auf das Treuhandkonto eingezahlt.',
+      };
+    case 'ESCROW_RELEASED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.ESCROW_RELEASED,
+        label: 'Treuhandmittel freigegeben',
+        description: 'Treuhandmittel wurden freigegeben.',
+      };
+    case 'ESCROW_REFUNDED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.ESCROW_REFUNDED,
+        label: 'Treuhandmittel erstattet',
+        description: 'Treuhandmittel wurden zurückerstattet.',
+      };
+    case 'NEGOTIATION_SLA_WARNING':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.NEGOTIATION_SLA_WARNING,
+        label: 'SLA Warnung',
+        description: 'Die Verhandlung nähert sich dem Ablaufdatum.',
+      };
+    case 'NEGOTIATION_SLA_BREACHED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.NEGOTIATION_SLA_BREACHED,
+        label: 'SLA verletzt',
+        description: 'Die Verhandlung ist aufgrund eines SLA-Verstoßes abgelaufen.',
+      };
+    case 'CONTRACT_SIGNATURE_REQUESTED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.CONTRACT_SIGNATURE_REQUESTED,
+        label: 'Signatur angefordert',
+        description: 'Vertrag wartet auf Unterschriften.',
+      };
+    case 'CONTRACT_SIGNATURE_COMPLETED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.CONTRACT_SIGNATURE_COMPLETED,
+        label: 'Signatur abgeschlossen',
+        description: 'Alle Vertragsunterschriften liegen vor.',
+      };
+    default:
+      return {
+        audience: NegotiationActivityAudience.PARTICIPANTS,
+        activityType: NegotiationActivityType.NEGOTIATION_CREATED,
+        label: 'Verhandlungsereignis',
+        description: 'Aktualisierung im Verhandlungsprozess.',
+      };
+  }
+}
+
+async function persistNegotiationActivity(
+  event: NegotiationDomainEvent & { occurredAt: Date },
+  context: NegotiationEventHandlerContext
+) {
+  await prisma.negotiationActivity.create({
+    data: {
+      negotiationId: event.negotiationId,
+      type: context.activityType,
+      audience: context.audience,
+      label: context.label,
+      description: context.description ?? null,
+      status: event.status,
+      payload: event.payload ?? null,
+      triggeredById: event.triggeredBy ?? undefined,
+      occurredAt: event.occurredAt,
+    },
+  });
+}
+
+async function dispatchToQueue(
+  event: NegotiationDomainEvent & { occurredAt: Date },
+  context: NegotiationEventHandlerContext
+) {
+  await enqueueNegotiationLifecycleEvent({
+    ...event,
+    occurredAt: event.occurredAt.toISOString(),
+    audience: context.audience,
+  });
+}
+
+registerNegotiationEventHandler(persistNegotiationActivity);
+registerNegotiationEventHandler(dispatchToQueue);
+
 export async function publishNegotiationEvent(event: NegotiationDomainEvent) {
   const occurredAt = event.occurredAt ?? new Date();
-  const payload = {
-    ...event,
-    occurredAt: occurredAt.toISOString(),
-  };
+  const context = resolveEventContext(event);
 
-  // eslint-disable-next-line no-console -- until messaging queue integration ships
-  console.info('[negotiation-event]', JSON.stringify(payload));
+  for (const handler of negotiationEventHandlers) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- sequential fan-out keeps ordering deterministic
+      await handler({ ...event, occurredAt }, context);
+    } catch (error) {
+      // eslint-disable-next-line no-console -- persistent logs for failed dispatch until observability stack lands
+      console.error('[negotiation-event][dispatch-failed]', event.type, error);
+    }
+  }
 }
