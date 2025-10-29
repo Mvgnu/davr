@@ -1,12 +1,15 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 import type { NegotiationApiResponse, NegotiationSnapshot } from '@/types/negotiations';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 const REFRESH_INTERVAL_MS = 15000;
+const STREAM_RECONNECT_DELAY_MS = 5000;
+const ACK_FLUSH_DELAY_MS = 750;
+const ACK_RETRY_DELAY_MS = 2000;
 
 async function fetchNegotiation(key: string): Promise<NegotiationSnapshot> {
   const response = await fetch(key, { credentials: 'include' });
@@ -32,6 +35,152 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
     revalidateOnFocus: true,
     revalidateOnReconnect: true,
   });
+
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [slaStatus, setSlaStatus] = useState<'OK' | 'WARNING' | 'BREACHED'>('OK');
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ackQueueRef = useRef<Set<string>>(new Set());
+  const ackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushAckQueue = useCallback(async () => {
+    if (ackQueueRef.current.size === 0) {
+      ackTimeoutRef.current = null;
+      return;
+    }
+
+    const ids = Array.from(ackQueueRef.current);
+    ackQueueRef.current.clear();
+    ackTimeoutRef.current = null;
+
+    try {
+      await fetch('/api/notifications/ack', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        credentials: 'include',
+        body: JSON.stringify({ ids }),
+      });
+    } catch (error) {
+      const queue = ackQueueRef.current;
+      ids.forEach((id) => queue.add(id));
+      ackTimeoutRef.current = setTimeout(() => {
+        void flushAckQueue();
+      }, ACK_RETRY_DELAY_MS);
+      console.error('[negotiation-stream][ack-failed]', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!negotiationId || typeof window === 'undefined') {
+      return () => {};
+    }
+
+    let eventSource: EventSource | null = null;
+    let closed = false;
+
+    const scheduleAckFlush = () => {
+      if (!ackTimeoutRef.current) {
+        ackTimeoutRef.current = setTimeout(() => {
+          void flushAckQueue();
+        }, ACK_FLUSH_DELAY_MS);
+      }
+    };
+
+    const connect = () => {
+      if (!negotiationId || typeof window === 'undefined') {
+        return;
+      }
+
+      const streamUrl = new URL('/api/notifications/stream', window.location.origin);
+      streamUrl.searchParams.set('negotiationId', negotiationId);
+
+      eventSource = new EventSource(streamUrl.toString());
+      eventSource.onopen = () => {
+        setStreamConnected(true);
+      };
+      eventSource.onmessage = (event) => {
+        if (!event.data) {
+          return;
+        }
+
+        try {
+          const envelope = JSON.parse(event.data) as {
+            id?: string;
+            type?: string;
+            negotiationId?: string;
+          };
+
+          if (!envelope?.negotiationId || envelope.negotiationId !== negotiationId) {
+            return;
+          }
+
+          setUnreadCount((current) => current + 1);
+
+          if (envelope.id) {
+            ackQueueRef.current.add(envelope.id);
+            scheduleAckFlush();
+          }
+
+          if (envelope.type === 'NEGOTIATION_SLA_WARNING') {
+            setSlaStatus((current) => (current === 'BREACHED' ? current : 'WARNING'));
+          } else if (envelope.type === 'NEGOTIATION_SLA_BREACHED') {
+            setSlaStatus('BREACHED');
+          }
+
+          void mutate();
+        } catch (streamError) {
+          console.error('[negotiation-stream][parse-failed]', streamError);
+        }
+      };
+      eventSource.onerror = () => {
+        setStreamConnected(false);
+        eventSource?.close();
+        if (!closed) {
+          reconnectTimeoutRef.current = setTimeout(connect, STREAM_RECONNECT_DELAY_MS);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      setStreamConnected(false);
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (ackTimeoutRef.current) {
+        clearTimeout(ackTimeoutRef.current);
+        ackTimeoutRef.current = null;
+      }
+      if (ackQueueRef.current.size > 0) {
+        void flushAckQueue();
+      }
+      eventSource?.close();
+    };
+  }, [flushAckQueue, mutate, negotiationId]);
+
+  useEffect(() => {
+    const latestActivity = data?.activities?.[0]?.occurredAt ?? null;
+    if (latestActivity) {
+      setUnreadCount(0);
+    }
+
+    const expiresAt = data?.expiresAt ? new Date(data.expiresAt).getTime() : null;
+    if (!expiresAt) {
+      setSlaStatus('OK');
+      return;
+    }
+
+    const now = Date.now();
+    if (expiresAt < now) {
+      setSlaStatus('BREACHED');
+    } else {
+      const twentyFourHours = 24 * 60 * 60 * 1000;
+      setSlaStatus(expiresAt - now < twentyFourHours ? 'WARNING' : 'OK');
+    }
+  }, [data?.activities, data?.expiresAt]);
 
   const runAction = useCallback(
     async (endpoint: string, options: NegotiationActionOptions = {}) => {
@@ -145,5 +294,11 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
     isValidating,
     error: error as Error | undefined,
     actions,
+    refresh: () => mutate(),
+    realtime: {
+      unreadCount,
+      streamConnected,
+      slaStatus,
+    },
   };
 }

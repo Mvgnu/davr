@@ -57,6 +57,9 @@ model User {
   offerCounters         OfferCounter[]
   negotiationStatusLogs NegotiationStatusHistory[]
   NegotiationActivity   NegotiationActivity[]
+  negotiationNotifications NegotiationNotification[]
+  premiumSubscriptions  PremiumSubscription[]
+  premiumConversionLogs PremiumConversionEvent[]
 
   @@index([role])
 }
@@ -67,6 +70,80 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model PremiumSubscription {
+  id                     String                      @id @default(cuid())
+  userId                 String
+  tier                   PremiumTier                 @default(PREMIUM)
+  status                 PremiumSubscriptionStatus   @default(TRIALING)
+  startedAt              DateTime                    @default(now())
+  currentPeriodEndsAt    DateTime?
+  cancellationRequestedAt DateTime?
+  metadata               Json?
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+  entitlements           PremiumEntitlement[]
+  user                   User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model PremiumEntitlement {
+  id              String         @id @default(cuid())
+  subscriptionId  String
+  feature         PremiumFeature
+  grantedAt       DateTime       @default(now())
+  expiresAt       DateTime?
+  source          String?
+  metadata        Json?
+  subscription    PremiumSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([feature])
+}
+
+model PremiumConversionEvent {
+  id             String                      @id @default(cuid())
+  userId         String?
+  negotiationId  String?
+  eventType      PremiumConversionEventType
+  occurredAt     DateTime                    @default(now())
+  metadata       Json?
+  user           User?                       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  negotiation    Negotiation?                @relation(fields: [negotiationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([negotiationId])
+  @@index([eventType, occurredAt])
+}
+
+model RecurringJob {
+  name        String   @id
+  handlerKey  String
+  intervalMs  Int
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  metadata    Json?
+}
+
+model JobExecutionLog {
+  id         String             @id @default(cuid())
+  jobName    String
+  status     JobExecutionStatus @default(SUCCEEDED)
+  attempt    Int                @default(1)
+  startedAt  DateTime           @default(now())
+  finishedAt DateTime?
+  error      String?
+  metadata   Json?
+
+  @@index([jobName])
+  @@index([status])
+  @@index([startedAt])
 }
 
 model RecyclingCenter {
@@ -287,6 +364,10 @@ model Negotiation {
   contract            DealContract?
   escrowAccount       EscrowAccount?
   NegotiationActivity NegotiationActivity[]
+  notifications      NegotiationNotification[]
+  premiumTier         PremiumTier?
+  premiumConversionEvents PremiumConversionEvent[]
+  contractIntentMetrics ContractIntentMetric[]
 
   @@index([listingId])
   @@index([buyerId])
@@ -347,6 +428,31 @@ model NegotiationActivity {
   @@index([status])
 }
 
+model NegotiationNotification {
+  id               String                       @id @default(cuid())
+  negotiationId    String
+  type             String
+  audience         NegotiationActivityAudience  @default(PARTICIPANTS)
+  status           NegotiationStatus?
+  triggeredById    String?
+  occurredAt       DateTime                     @default(now())
+  payload          Json?
+  channels         String[]
+  deliveryStatus   NotificationDeliveryStatus   @default(PENDING)
+  deliveryAttempts Int                          @default(0)
+  lastAttemptAt    DateTime?
+  deliveredAt      DateTime?
+  deliveryError    String?
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+  negotiation      Negotiation                  @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  triggeredBy      User?                        @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+
+  @@index([negotiationId])
+  @@index([occurredAt])
+  @@index([deliveryStatus])
+}
+
 model DealContract {
   id             String         @id @default(cuid())
   negotiationId  String         @unique
@@ -356,11 +462,82 @@ model DealContract {
   buyerSignedAt  DateTime?
   sellerSignedAt DateTime?
   finalizedAt    DateTime?
+  templateKey    String?
+  provider       String?
+  providerEnvelopeId String?
+  providerDocumentId String?
+  envelopeStatus ContractEnvelopeStatus @default(DRAFT)
+  participantStates Json?
+  lastProviderSyncAt DateTime?
+  lastError      String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   negotiation    Negotiation    @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  documents      DealContractDocument[]
+  intentMetrics  ContractIntentMetric[]
 
   @@index([status])
+}
+
+model ContractTemplate {
+  id          String                    @id @default(cuid())
+  key         String                    @unique
+  name        String
+  description String?
+  provider    String
+  version     Int                       @default(1)
+  fields      Json?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+  documents   DealContractDocument[]
+
+  @@index([provider])
+}
+
+model DealContractDocument {
+  id                String                 @id @default(cuid())
+  contractId        String
+  templateId        String?
+  provider          String?
+  providerDocumentId String?
+  providerEnvelopeId String?
+  status            ContractEnvelopeStatus @default(DRAFT)
+  url               String?
+  metadata          Json?
+  issuedAt          DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  contract          DealContract           @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  template          ContractTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([contractId])
+  @@index([status])
+}
+
+model ContractIntentMetric {
+  id             String                   @id @default(cuid())
+  negotiationId  String
+  contractId     String
+  eventType      ContractIntentEventType
+  participantRole String?
+  metadata       Json?
+  occurredAt     DateTime                 @default(now())
+  createdAt      DateTime                 @default(now())
+  negotiation    Negotiation              @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  contract       DealContract             @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([negotiationId])
+  @@index([contractId])
+  @@index([eventType])
+  @@index([occurredAt])
+}
+
+enum ContractIntentEventType {
+  ENVELOPE_ISSUED
+  PARTICIPANT_SIGNED
+  ENVELOPE_COMPLETED
+  ENVELOPE_DECLINED
 }
 
 model EscrowAccount {
@@ -436,6 +613,15 @@ enum ContractStatus {
   VOID
 }
 
+enum ContractEnvelopeStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_SIGNED
+  COMPLETED
+  VOID
+  FAILED
+}
+
 enum EscrowStatus {
   PENDING_SETUP
   AWAITING_FUNDS
@@ -465,6 +651,9 @@ enum NegotiationActivityType {
   NEGOTIATION_SLA_BREACHED
   CONTRACT_SIGNATURE_REQUESTED
   CONTRACT_SIGNATURE_COMPLETED
+  ESCROW_DISPUTE_OPENED
+  ESCROW_DISPUTE_RESOLVED
+  ESCROW_STATEMENT_READY
 }
 
 enum NegotiationActivityAudience {
@@ -499,4 +688,42 @@ enum UserRole {
   USER
   CENTER_OWNER
   ADMIN
+}
+
+enum PremiumTier {
+  STANDARD
+  PREMIUM
+  CONCIERGE
+}
+
+enum PremiumSubscriptionStatus {
+  TRIALING
+  ACTIVE
+  CANCELED
+  EXPIRED
+}
+
+enum PremiumFeature {
+  ADVANCED_ANALYTICS
+  CONCIERGE_SLA
+  DISPUTE_FAST_TRACK
+}
+
+enum PremiumConversionEventType {
+  UPGRADE_CTA_VIEWED
+  TRIAL_STARTED
+  UPGRADE_CONFIRMED
+  PREMIUM_NEGOTIATION_COMPLETED
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+enum JobExecutionStatus {
+  SUCCEEDED
+  FAILED
+  RETRYING
 }

@@ -6,18 +6,28 @@ console that ship with the first iteration.
 ## Workspace Components
 
 * `components/marketplace/deals/NegotiationWorkspace.tsx`
-  * Client orchestrator that renders the timeline, contract status, offer composer, and escrow ledger widgets.
-  * Bootstraps negotiations via `/api/marketplace/deals` and hydrates data with the SWR hook (`useNegotiationWorkspace`).
+  * Client orchestrator that renders the timeline, contract status, offer composer, escrow ledger, and (für Premium-Nutzer)
+    das Premium-Insights-Widget.
+  * Authenticated users open an SSE stream against `/api/notifications/stream`; the hook automatically scopes subscriptions to
+    the viewer's user channel and their active negotiation before falling back to SWR polling. Surfaces SLA warnings/breaches as
+    top-level banners, records upgrade CTA impressions via `/api/marketplace/premium/subscription`, and batches acknowledgement
+    calls to `/api/notifications/ack` so persisted envelopes drop out of the pending queue once the UI processes them.
+  * REST fallbacks call `GET /api/notifications` with schema-validated filters. Failed validations render a toast and keep the
+    prior buffer in place so the UI never flashes empty results for minor input mistakes.
 * `components/marketplace/deals/NegotiationTimeline.tsx`
   * Merges `negotiation.activities` and `statusHistory` into a chronological list.
-  * Highlights SLA warnings (`NEGOTIATION_SLA_WARNING`, `NEGOTIATION_SLA_BREACHED`) with amber/destructive badges.
+  * Highlights SLA warnings (`NEGOTIATION_SLA_WARNING`, `NEGOTIATION_SLA_BREACHED`) with amber/destructive badges and shows a
+    badge with unread real-time events.
 * `components/marketplace/deals/NegotiationOfferComposer.tsx`
   * Handles counter and acceptance flows with optimistic updates and form validation.
   * Dispatches to `/api/marketplace/deals/[id]/offers` and `/api/marketplace/deals/[id]/accept`.
+* `components/marketplace/deals/NegotiationPremiumInsights.tsx`
+  * Premium-only analytics widget showing offer iteration counts, Verhandlungsdauer, and SLA-Plan, gated by
+    `premium.viewer.hasAdvancedAnalytics`.
 * `components/marketplace/deals/EscrowStatusCard.tsx`
-  * Visualises expected vs. funded balances and transaction history from the ledger payload.
+  * Visualises expected vs. funded balances, reconciliation warnings, disputes, and ledger history with contextual badges.
 * `components/marketplace/deals/NegotiationContractCard.tsx`
-  * Surfaces signature state, pending steps, and calls the signing stub at `/api/marketplace/deals/[id]/contracts/sign`.
+  * Surfaces signature state, provider envelope lifecycle, and exposes document preview links via `/api/marketplace/deals/[id]/contracts/sign`.
 
 ## Listing Detail Integration
 
@@ -45,8 +55,27 @@ console that ship with the first iteration.
     },
     "contract": {
       "status": "PENDING_SIGNATURES",
-      "buyerSignedAt": null,
-      "sellerSignedAt": "2025-10-29T15:20:00.000Z"
+      "envelopeStatus": "PARTIALLY_SIGNED",
+      "provider": "mock-esign",
+      "participantStates": {
+        "BUYER": { "status": "SIGNED", "signedAt": "2025-10-29T15:15:00.000Z" },
+        "SELLER": { "status": "PENDING" }
+      },
+      "documents": [
+        { "id": "doc_1", "status": "ISSUED", "providerEnvelopeId": "env_1" }
+      ]
+    },
+    "premiumTier": "PREMIUM",
+    "premium": {
+      "negotiationTier": "PREMIUM",
+      "viewer": {
+        "tier": "PREMIUM",
+        "status": "TRIALING",
+        "entitlements": ["ADVANCED_ANALYTICS", "DISPUTE_FAST_TRACK"],
+        "hasAdvancedAnalytics": true,
+        "hasConciergeSla": false,
+        "hasDisputeFastTrack": true
+      }
     }
   },
   "kpis": {
@@ -60,18 +89,39 @@ console that ship with the first iteration.
 ## Admin Oversight Console
 
 `/app/admin/deals/page.tsx` lists the 50 most recent negotiations with filters for lifecycle status, SLA risk buckets (24h risk,
-breached), and premium vs. standard workflows. Summary cards include active negotiation count, escrow volume, and SLA risk
-count. Each row shows the escrow balance, premium badge, and last activity timestamp.
+breached), and premium vs. standard workflows. Summary cards now include dispute counts, reconciliation warnings, and average
+funding latency alongside active negotiation and escrow volume KPIs. Each row shows escrow balance, premium badge, dispute
+state, reconciliation alerts, and the last activity timestamp. Nicht-Premium-Admins sehen einen Upgrade-Hinweis mit Verweis auf
+die Operations-Ansicht.
+
+`/app/admin/deals/operations/page.tsx` zeigt Scheduler-Gesundheit (Intervall, nächste/letzte Ausführung), die 25 jüngsten
+Ausführungen sowie eine Notification-Fan-out-Kachel mit Pending-/Failed-Zählern. Ein zusätzlicher "Premium Conversion Funnel"
+visualisiert CTA-Aufrufe, Trial-Starts, Upgrades, abgeschlossene Premium-Deals, aktive Abos und Conversion-Raten (Basis:
+`GET /api/marketplace/premium/metrics`). Über das Formular im Card-Header lässt sich der Auswertungszeitraum (7–120 Tage)
+mittels `premiumWindow`-Query ändern, bestehende Parameter wie `upgrade` bleiben erhalten. Seit 2025-10-30T03:15Z steht
+zusätzlich ein Tier-Dropdown bereit: Der `premiumTier`-Parameter (`ALL`, `PREMIUM`, `CONCIERGE`) filtert Funnel, Vergleichsdeltas
+und aktive Abos auf die gewünschte Kohorte. Ein Formular-POST auf
+`/api/admin/jobs/[jobName]/run` löst Jobs manuell aus; Concierge-Berechtigungen werden bei fehlendem Premium-Profil explizit
+eingefordert und verlinken jetzt auf `/admin/deals/operations/upgrade`.
+Seit 2025-10-30T02:40Z hebt der Funnel zusätzlich Vorperioden-Vergleiche hervor: Die `comparison`-Deltas werden in der UI als
+grüne/rote Inline-Werte dargestellt und basieren auf identischen Fenstergrößen, sodass Growth- oder Rückgänge sofort ins Auge
+fallen.
+Seit 2025-10-30T03:45Z ergänzt eine scrollbare Tageswerte-Tabelle die Kennzahlen. Die neuesten Conversion-Ereignisse stehen
+oberhalb, inklusive Tages-Conversionsraten, damit Growth-Experimente und Anomalien schneller erkannt werden.
 
 ## Telemetry Notes
 
-* Workspace components rely on `useNegotiationWorkspace`, which polls every 15s and applies optimistic updates for counter and
-  signing flows.
+* Workspace components rely on `useNegotiationWorkspace`, which now opens an SSE stream to `/api/notifications/stream`,
+  acknowledges processed envelopes through `/api/notifications/ack`, and only falls back to the 15s poll when the stream drops.
+  Optimistic updates remain in place for counter and signing flows. Upgrade CTA-Aufrufe werden an
+  `/api/marketplace/premium/subscription` gemeldet.
 * KPI data is included in the API response for downstream analytics (completion, escrow funding ratio, premium flag) and is
-  surfaced in the admin dashboard.
+  surfaced in the admin dashboard und im Premium-Insights-Widget.
+* Contract signature analytics feed the new `ContractIntentMetric` table via helpers in `lib/contracts/analytics.ts`, so
+  dashboards can render signature completion times without subscribing to raw webhook traffic.
 
 ## Follow-ups
 
-* Wire the SLA watchdog job (`lib/jobs/negotiations/sla.ts`) into a scheduled worker to emit warnings proactively.
-* Replace optimistic polling with websocket updates once the messaging service lands.
-* Capture screenshot assets for the design system once visual QA is finalised.
+* Swap the SSE gateway for a websocket transport backed by Redis or Temporal when the production messaging layer is available.
+* Capture screenshot assets for die Premium-Insights-Komponente, sobald visuelles QA abgeschlossen ist.
+* Expand Premium-Analytics (z. B. Forecasts, Conversion-Heatmaps) sobald ausreichend Daten vorliegen.

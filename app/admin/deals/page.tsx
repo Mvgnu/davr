@@ -1,4 +1,4 @@
-import { addHours, isAfter } from 'date-fns';
+import { addHours, differenceInHours, isAfter } from 'date-fns';
 import { getServerSession } from 'next-auth/next';
 import Link from 'next/link';
 
@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db/prisma';
-import type { NegotiationStatus } from '@prisma/client';
+import { getPremiumProfileForUser } from '@/lib/premium/entitlements';
+import { EscrowTransactionType, type NegotiationStatus } from '@prisma/client';
 
 interface AdminDealsPageProps {
   searchParams?: Record<string, string | string[] | undefined>;
@@ -33,6 +34,8 @@ export default async function AdminDealsPage({ searchParams }: AdminDealsPagePro
 
   const now = new Date();
   const slaWarningThreshold = addHours(now, 24);
+
+  const premiumProfile = session?.user?.id ? await getPremiumProfileForUser(session.user.id) : null;
 
   const negotiations = await prisma.negotiation.findMany({
     where: {
@@ -64,7 +67,28 @@ export default async function AdminDealsPage({ searchParams }: AdminDealsPagePro
       listing: { select: { title: true, isPremiumWorkflow: true } },
       buyer: { select: { name: true } },
       seller: { select: { name: true } },
-      escrowAccount: { select: { expectedAmount: true, fundedAmount: true, status: true } },
+      escrowAccount: {
+        select: {
+          expectedAmount: true,
+          fundedAmount: true,
+          status: true,
+          providerReference: true,
+          transactions: {
+            where: {
+              type: { in: [EscrowTransactionType.ADJUSTMENT, EscrowTransactionType.FUND] },
+            },
+            select: {
+              id: true,
+              type: true,
+              amount: true,
+              occurredAt: true,
+              metadata: true,
+            },
+            orderBy: { occurredAt: 'desc' },
+            take: 10,
+          },
+        },
+      },
       activities: {
         orderBy: { occurredAt: 'desc' },
         take: 1,
@@ -80,15 +104,80 @@ export default async function AdminDealsPage({ searchParams }: AdminDealsPagePro
   const slaRiskCount = negotiations.filter((negotiation) =>
     negotiation.expiresAt ? isAfter(slaWarningThreshold, negotiation.expiresAt) && isAfter(negotiation.expiresAt, now) : false
   ).length;
+  const slaBreachedCount = negotiations.filter((negotiation) =>
+    negotiation.expiresAt ? isAfter(now, negotiation.expiresAt) && !TERMINAL_STATUSES.includes(negotiation.status) : false
+  ).length;
+  const disputeCount = negotiations.filter((negotiation) => negotiation.escrowAccount?.status === 'DISPUTED').length;
+  const reconciliationAlerts = negotiations.filter((negotiation) =>
+    negotiation.escrowAccount?.transactions?.some((transaction) => {
+      if (transaction.type !== 'ADJUSTMENT') {
+        return false;
+      }
+      const metadata = (transaction.metadata ?? {}) as { reconciliation?: { status?: string } };
+      return metadata.reconciliation?.status === 'MISMATCH';
+    })
+  ).length;
+  const fundingLatencies = negotiations
+    .map((negotiation) => {
+      if (!negotiation.escrowAccount?.transactions) {
+        return null;
+      }
+      const fundTransactions = negotiation.escrowAccount.transactions
+        .filter((transaction) => transaction.type === 'FUND')
+        .map((transaction) => new Date(transaction.occurredAt));
+      if (fundTransactions.length === 0 || !negotiation.createdAt) {
+        return null;
+      }
+      const earliestFund = fundTransactions.reduce((earliest, current) =>
+        current < earliest ? current : earliest
+      , fundTransactions[0]);
+      const latency = differenceInHours(earliestFund, negotiation.createdAt);
+      return Math.abs(latency);
+    })
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const averageFundingLatency = fundingLatencies.length
+    ? fundingLatencies.reduce((sum, hours) => sum + hours, 0) / fundingLatencies.length
+    : null;
 
   return (
     <div className="space-y-6">
+      {premiumProfile && !premiumProfile.hasAdvancedAnalytics ? (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardHeader>
+            <CardTitle>Premium-Metriken freischalten</CardTitle>
+            <CardDescription>
+              Aktivieren Sie Premium Analytics und Concierge-SLA, um Disputes schneller zu lösen und SLA-Backlogs
+              transparent zu überwachen.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link
+              href="/app/admin/deals/operations?upgrade=premium"
+              className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Upgrade jetzt starten
+            </Link>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {slaBreachedCount > 0 ? (
+        <Card className="border-destructive/60 bg-destructive/10">
+          <CardHeader>
+            <CardTitle className="text-destructive">SLA Verletzungen aktiv</CardTitle>
+            <CardDescription>
+              {slaBreachedCount} Verhandlungen haben SLAs überschritten und benötigen sofortige Aufmerksamkeit.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Deal-Workspace Übersicht</CardTitle>
           <CardDescription>Lifecycle-Überblick über laufende Verhandlungen und Treuhandkonten.</CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+        <CardContent className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <div>
             <p className="text-muted-foreground">Aktive Verhandlungen</p>
             <p className="text-2xl font-semibold">{activeCount}</p>
@@ -102,6 +191,20 @@ export default async function AdminDealsPage({ searchParams }: AdminDealsPagePro
           <div>
             <p className="text-muted-foreground">SLA Risiko (24h)</p>
             <p className="text-2xl font-semibold">{slaRiskCount}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Disputes offen</p>
+            <p className="text-2xl font-semibold">{disputeCount}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Reconciliation Warnungen</p>
+            <p className="text-2xl font-semibold">{reconciliationAlerts}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Ø Funding Latenz (h)</p>
+            <p className="text-2xl font-semibold">
+              {averageFundingLatency !== null ? averageFundingLatency.toFixed(1) : '–'}
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -182,6 +285,14 @@ export default async function AdminDealsPage({ searchParams }: AdminDealsPagePro
               {negotiations.map((negotiation) => {
                 const activity = negotiation.activities[0];
                 const isPremium = negotiation.listing.isPremiumWorkflow;
+                const escrow = negotiation.escrowAccount;
+                const hasReconciliationWarning = escrow?.transactions?.some((transaction) => {
+                  if (transaction.type !== 'ADJUSTMENT') {
+                    return false;
+                  }
+                  const metadata = (transaction.metadata ?? {}) as { reconciliation?: { status?: string } };
+                  return metadata.reconciliation?.status === 'MISMATCH';
+                });
                 return (
                   <TableRow key={negotiation.id}>
                     <TableCell className="space-y-1">
@@ -197,20 +308,28 @@ export default async function AdminDealsPage({ searchParams }: AdminDealsPagePro
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {negotiation.escrowAccount ? (
-                        <div className="text-xs">
+                      {escrow ? (
+                        <div className="space-y-1 text-xs">
                           <p>
-                            {negotiation.escrowAccount.fundedAmount.toLocaleString('de-DE', {
+                            {escrow.fundedAmount.toLocaleString('de-DE', {
                               style: 'currency',
                               currency: 'EUR',
                             })}{' '}
                             /{' '}
-                            {(negotiation.escrowAccount.expectedAmount ?? 0).toLocaleString('de-DE', {
+                            {(escrow.expectedAmount ?? 0).toLocaleString('de-DE', {
                               style: 'currency',
                               currency: 'EUR',
                             })}
                           </p>
-                          <p className="text-muted-foreground">{negotiation.escrowAccount.status}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{escrow.status}</Badge>
+                            {escrow.status === 'DISPUTED' ? (
+                              <Badge variant="destructive">Disput</Badge>
+                            ) : null}
+                            {hasReconciliationWarning ? (
+                              <Badge variant="secondary">Reconciliation Warnung</Badge>
+                            ) : null}
+                          </div>
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">Kein Escrow</span>

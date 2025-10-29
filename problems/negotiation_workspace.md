@@ -12,4 +12,5 @@
   - 2025-10-29 15:39 UTC: Added SLA watchdog job skeleton for negotiation expirations.
   - 2025-10-29 15:41 UTC: Added contract signing endpoint and acceptance event fan-out.
   - 2025-10-29 15:42 UTC: Added SWR dependency to support negotiation workspace data hooks.
-  - 2025-10-29 15:50 UTC: Implemented listing workspace UI, admin deals console, and refreshed documentation.
+- 2025-10-29 15:50 UTC: Implemented listing workspace UI, admin deals console, and refreshed documentation.
+- 2025-10-29 16:05 UTC: Added scheduler-backed SLA smoke tests validating warning/breach notification fan-out.

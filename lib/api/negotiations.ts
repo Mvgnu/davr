@@ -23,7 +23,14 @@ export const NEGOTIATION_DETAIL_INCLUDE = {
     take: 50,
   },
   escrowAccount: true,
-  contract: true,
+  contract: {
+    include: {
+      documents: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 5,
+      },
+    },
+  },
   listing: {
     select: { id: true, title: true, seller_id: true, isPremiumWorkflow: true },
   },

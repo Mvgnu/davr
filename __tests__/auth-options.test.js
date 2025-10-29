@@ -1,16 +1,20 @@
-const { authOptions } = require('../lib/auth/options');
 const bcrypt = require('bcryptjs');
 
-// Mock Prisma client
-jest.mock('../lib/db/prisma', () => ({
-  prisma: {
-    user: {
-      findUnique: jest.fn(),
-    },
+const prismaDouble = {
+  user: {
+    findUnique: jest.fn(),
   },
-}));
+};
 
-const { prisma } = require('../lib/db/prisma');
+global.__PRISMA_TEST_DOUBLE__ = prismaDouble;
+
+const { prisma } = require('@/lib/db/prisma');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { authOptions, authorizeWithCredentials } = require('@/lib/auth/options');
+
+afterAll(() => {
+  delete global.__PRISMA_TEST_DOUBLE__;
+});
 
 describe('NextAuth Configuration', () => {
   beforeEach(() => {
@@ -24,14 +28,14 @@ describe('NextAuth Configuration', () => {
     };
 
     test('should reject when credentials are missing', async () => {
-      const result = await authOptions.providers[0].authorize({});
+      const result = await authorizeWithCredentials({});
 
       expect(result).toBeNull();
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
     });
 
     test('should reject when email is missing', async () => {
-      const result = await authOptions.providers[0].authorize({
+      const result = await authorizeWithCredentials({
         password: 'testpassword',
       });
 
@@ -40,7 +44,7 @@ describe('NextAuth Configuration', () => {
     });
 
     test('should reject when password is missing', async () => {
-      const result = await authOptions.providers[0].authorize({
+      const result = await authorizeWithCredentials({
         email: 'test@example.com',
       });
 
@@ -60,7 +64,7 @@ describe('NextAuth Configuration', () => {
 
       prisma.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await authOptions.providers[0].authorize(mockCredentials);
+      const result = await authorizeWithCredentials(mockCredentials);
 
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email: 'test@example.com' },
@@ -73,7 +77,7 @@ describe('NextAuth Configuration', () => {
     test('should reject when user is not found', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
 
-      const result = await authOptions.providers[0].authorize(mockCredentials);
+      const result = await authorizeWithCredentials(mockCredentials);
 
       expect(result).toBeNull();
     });
@@ -89,7 +93,7 @@ describe('NextAuth Configuration', () => {
 
       prisma.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await authOptions.providers[0].authorize(mockCredentials);
+      const result = await authorizeWithCredentials(mockCredentials);
 
       expect(result).toBeNull();
     });
@@ -106,7 +110,7 @@ describe('NextAuth Configuration', () => {
 
       prisma.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await authOptions.providers[0].authorize(mockCredentials);
+      const result = await authorizeWithCredentials(mockCredentials);
 
       expect(result).toBeNull();
     });
@@ -123,7 +127,7 @@ describe('NextAuth Configuration', () => {
 
       prisma.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await authOptions.providers[0].authorize(mockCredentials);
+      const result = await authorizeWithCredentials(mockCredentials);
 
       expect(result).toBeTruthy();
       expect(result.id).toBe('1');

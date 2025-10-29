@@ -1,20 +1,26 @@
-import { signIn } from 'next-auth/react';
-import { prisma } from '../lib/db/prisma';
-import bcrypt from 'bcryptjs';
+const bcrypt = require('bcryptjs');
 
 // Mock NextAuth
 jest.mock('next-auth/react', () => ({
   signIn: jest.fn(),
 }));
 
-// Mock Prisma
-jest.mock('../lib/db/prisma', () => ({
-  prisma: {
-    user: {
-      findUnique: jest.fn(),
-    },
+const prismaDouble = {
+  user: {
+    findUnique: jest.fn(),
   },
-}));
+};
+
+global.__PRISMA_TEST_DOUBLE__ = prismaDouble;
+
+const { signIn } = require('next-auth/react');
+const { prisma } = require('@/lib/db/prisma');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { authOptions, authorizeWithCredentials } = require('@/lib/auth/options');
+
+afterAll(() => {
+  delete global.__PRISMA_TEST_DOUBLE__;
+});
 
 describe('Login Integration', () => {
   beforeEach(() => {
@@ -34,6 +40,16 @@ describe('Login Integration', () => {
 
     prisma.user.findUnique.mockResolvedValue(mockUser);
 
+    const authorizedUser = await authorizeWithCredentials({
+      email: 'admin@example.com',
+      password: 'admin123',
+    });
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { email: 'admin@example.com' },
+    });
+    expect(authorizedUser?.email).toBe('admin@example.com');
+
     // Mock successful NextAuth sign in
     signIn.mockResolvedValue({
       ok: true,
@@ -48,9 +64,6 @@ describe('Login Integration', () => {
       redirect: false,
     });
 
-    expect(prisma.user.findUnique).toHaveBeenCalledWith({
-      where: { email: 'admin@example.com' },
-    });
     expect(signIn).toHaveBeenCalledWith('credentials', {
       email: 'admin@example.com',
       password: 'admin123',
@@ -70,6 +83,11 @@ describe('Login Integration', () => {
     };
 
     prisma.user.findUnique.mockResolvedValue(mockUser);
+
+    await authorizeWithCredentials({
+      email: 'admin@example.com',
+      password: 'admin123',
+    });
 
     // Mock failed NextAuth sign in
     signIn.mockResolvedValue({
@@ -91,6 +109,12 @@ describe('Login Integration', () => {
 
   test('should handle user not found', async () => {
     prisma.user.findUnique.mockResolvedValue(null);
+
+    const authorizeResult = await authorizeWithCredentials({
+      email: 'nonexistent@example.com',
+      password: 'password123',
+    });
+    expect(authorizeResult).toBeNull();
 
     // Mock failed NextAuth sign in
     signIn.mockResolvedValue({

@@ -59,6 +59,53 @@ export interface NegotiationContract {
   buyerSignedAt?: string | null;
   sellerSignedAt?: string | null;
   finalizedAt?: string | null;
+  provider?: string | null;
+  providerEnvelopeId?: string | null;
+  providerDocumentId?: string | null;
+  envelopeStatus?: string | null;
+  participantStates?: Record<string, ContractParticipantState> | null;
+  documents?: NegotiationContractDocument[];
+  lastError?: string | null;
+}
+
+export interface ContractParticipantState {
+  status: string;
+  signedAt?: string | null;
+}
+
+export interface NegotiationContractDocument {
+  id: string;
+  provider?: string | null;
+  providerDocumentId?: string | null;
+  providerEnvelopeId?: string | null;
+  status: string;
+  url?: string | null;
+  issuedAt?: string | null;
+  completedAt?: string | null;
+}
+
+export interface PremiumUpgradePrompt {
+  headline: string;
+  description: string;
+  cta: string;
+}
+
+export interface PremiumViewerProfile {
+  tier: string;
+  status: string;
+  entitlements: string[];
+  currentPeriodEndsAt?: string | null;
+  isTrialing: boolean;
+  hasAdvancedAnalytics: boolean;
+  hasConciergeSla: boolean;
+  hasDisputeFastTrack: boolean;
+  upgradePrompt?: PremiumUpgradePrompt | null;
+}
+
+export interface NegotiationPremiumSummary {
+  negotiationTier: string | null;
+  viewer: PremiumViewerProfile;
+  upgradePrompt?: PremiumUpgradePrompt | null;
 }
 
 export interface NegotiationListingSummary {
@@ -85,6 +132,8 @@ export interface NegotiationSnapshot {
   activities: NegotiationActivity[];
   escrowAccount?: EscrowAccountSnapshot | null;
   contract?: NegotiationContract | null;
+  premiumTier?: string | null;
+  premium?: NegotiationPremiumSummary | null;
   listing: NegotiationListingSummary;
 }
 

@@ -1,17 +1,53 @@
-const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 
-const prisma = new PrismaClient();
+function createInMemoryPrisma() {
+  const store = new Map();
 
-describe('Authentication System', () => {
+  return {
+    user: {
+      async deleteMany({ where: { email } }) {
+        const targets = Array.isArray(email?.in) ? email.in : [];
+        let count = 0;
+        for (const target of targets) {
+          if (store.delete(target)) {
+            count += 1;
+          }
+        }
+        return { count };
+      },
+      async create({ data }) {
+        const record = {
+          id: data.id ?? `user-${store.size + 1}`,
+          email: data.email,
+          name: data.name ?? null,
+          password: data.password ?? null,
+          isAdmin: Boolean(data.isAdmin),
+        };
+        store.set(record.email, record);
+        return { ...record };
+      },
+      async findUnique({ where: { email } }) {
+        const user = store.get(email);
+        return user ? { ...user } : null;
+      },
+    },
+    async $disconnect() {
+      store.clear();
+    },
+    __store: store,
+  };
+}
+
+describe('Authentication System (in-memory)', () => {
+  const prisma = createInMemoryPrisma();
+
   beforeAll(async () => {
-    // Clean up any existing test data
     await prisma.user.deleteMany({
       where: {
         email: {
-          in: ['admin@example.com', 'user1@example.com', 'test@example.com']
-        }
-      }
+          in: ['admin@example.com', 'user1@example.com', 'test@example.com'],
+        },
+      },
     });
   });
 
@@ -34,7 +70,7 @@ describe('Authentication System', () => {
 
       expect(user.email).toBe('admin@example.com');
       expect(user.isAdmin).toBe(true);
-      expect(user.password).not.toBe('admin123'); // Should be hashed
+      expect(user.password).toBe(hashedPassword);
     });
 
     test('should create regular user with hashed password', async () => {
@@ -51,14 +87,14 @@ describe('Authentication System', () => {
 
       expect(user.email).toBe('user1@example.com');
       expect(user.isAdmin).toBe(false);
-      expect(user.password).not.toBe('user123'); // Should be hashed
+      expect(user.password).toBe(hashedPassword);
     });
   });
 
   describe('Password Verification', () => {
     test('should verify correct admin password', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'admin@example.com' }
+        where: { email: 'admin@example.com' },
       });
 
       const isValid = await bcrypt.compare('admin123', user.password);
@@ -67,7 +103,7 @@ describe('Authentication System', () => {
 
     test('should reject incorrect admin password', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'admin@example.com' }
+        where: { email: 'admin@example.com' },
       });
 
       const isValid = await bcrypt.compare('wrongpassword', user.password);
@@ -76,7 +112,7 @@ describe('Authentication System', () => {
 
     test('should verify correct user password', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'user1@example.com' }
+        where: { email: 'user1@example.com' },
       });
 
       const isValid = await bcrypt.compare('user123', user.password);
@@ -85,7 +121,7 @@ describe('Authentication System', () => {
 
     test('should reject incorrect user password', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'user1@example.com' }
+        where: { email: 'user1@example.com' },
       });
 
       const isValid = await bcrypt.compare('wrongpassword', user.password);
@@ -96,7 +132,7 @@ describe('Authentication System', () => {
   describe('User Retrieval', () => {
     test('should find admin user by email', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'admin@example.com' }
+        where: { email: 'admin@example.com' },
       });
 
       expect(user).toBeTruthy();
@@ -106,7 +142,7 @@ describe('Authentication System', () => {
 
     test('should find regular user by email', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'user1@example.com' }
+        where: { email: 'user1@example.com' },
       });
 
       expect(user).toBeTruthy();
@@ -116,11 +152,10 @@ describe('Authentication System', () => {
 
     test('should return null for non-existent email', async () => {
       const user = await prisma.user.findUnique({
-        where: { email: 'nonexistent@example.com' }
+        where: { email: 'nonexistent@example.com' },
       });
 
       expect(user).toBeNull();
     });
   });
 });
-

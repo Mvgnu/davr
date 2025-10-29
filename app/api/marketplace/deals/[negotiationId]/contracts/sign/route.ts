@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { ContractStatus, NegotiationStatus } from '@prisma/client';
+import { ContractEnvelopeStatus, ContractStatus, NegotiationStatus } from '@prisma/client';
 
 import { authOptions } from '@/lib/auth/options';
 import {
@@ -11,6 +11,7 @@ import {
 } from '@/lib/api/negotiations';
 import { prisma } from '@/lib/db/prisma';
 import { publishNegotiationEvent } from '@/lib/events/negotiations';
+import { type ContractParticipant, getESignProvider } from '@/lib/integrations/esign';
 
 interface SignContractPayload {
   intent?: 'BUYER' | 'SELLER' | 'ADMIN';
@@ -92,33 +93,45 @@ export async function POST(
       intent: body.intent,
     });
 
-    const negotiation = await prisma.$transaction(async (tx) => {
-      const contract = await tx.dealContract.update({
-        where: { negotiationId: access.negotiation.id },
-        data: {
-          status: ContractStatus.PENDING_SIGNATURES,
-          buyerSignedAt:
-            role === 'BUYER' || (role === 'ADMIN' && !access.negotiation.contract.buyerSignedAt)
-              ? new Date()
-              : access.negotiation.contract.buyerSignedAt ?? undefined,
-          sellerSignedAt:
-            role === 'SELLER' || (role === 'ADMIN' && !access.negotiation.contract.sellerSignedAt)
-              ? new Date()
-              : access.negotiation.contract.sellerSignedAt ?? undefined,
-        },
+    const participants = await resolveParticipants(access.negotiation.id, [
+      { id: access.negotiation.buyerId, role: 'BUYER' as const },
+      { id: access.negotiation.sellerId, role: 'SELLER' as const },
+    ]);
+
+    if (role === 'ADMIN') {
+      participants.push({
+        id: session.user.id,
+        role: 'ADMIN',
+        name: session.user.name ?? 'Admin',
+        email: session.user.email ?? undefined,
       });
+    }
 
-      const bothSigned = Boolean(contract.buyerSignedAt && contract.sellerSignedAt);
+    const provider = getESignProvider();
 
+    if (!access.negotiation.contract.providerEnvelopeId) {
+      await provider.issueEnvelope({
+        negotiationId: access.negotiation.id,
+        contractId: access.negotiation.contract.id,
+        templateKey: access.negotiation.contract.templateKey,
+        provider: access.negotiation.contract.provider,
+        draftTerms: access.negotiation.contract.draftTerms,
+        participants,
+      });
+    }
+
+    const envelope = await provider.recordSignature({
+      contractId: access.negotiation.contract.id,
+      negotiationId: access.negotiation.id,
+      participant: participants.find((p) => p.role === role)!,
+    });
+
+    const buyerSigned = envelope.participantStates.BUYER?.status === 'SIGNED';
+    const sellerSigned = envelope.participantStates.SELLER?.status === 'SIGNED';
+    const bothSigned = buyerSigned && sellerSigned;
+
+    const negotiation = await prisma.$transaction(async (tx) => {
       if (bothSigned) {
-        await tx.dealContract.update({
-          where: { negotiationId: access.negotiation.id },
-          data: {
-            status: ContractStatus.SIGNED,
-            finalizedAt: new Date(),
-          },
-        });
-
         await tx.negotiation.update({
           where: { id: access.negotiation.id },
           data: { status: NegotiationStatus.CONTRACT_SIGNED },
@@ -151,38 +164,25 @@ export async function POST(
       return snapshot;
     });
 
-    const currentContract = negotiation.contract;
-    const bothSigned = Boolean(currentContract?.buyerSignedAt && currentContract?.sellerSignedAt);
-
-    if (bothSigned && currentContract?.status === ContractStatus.SIGNED) {
-      await publishNegotiationEvent({
-        type: 'CONTRACT_SIGNATURE_COMPLETED',
-        negotiationId: negotiation.id,
-        triggeredBy: session.user.id,
-        status: negotiation.status,
-        payload: {
-          buyerSignedAt: currentContract.buyerSignedAt?.toISOString(),
-          sellerSignedAt: currentContract.sellerSignedAt?.toISOString(),
-        },
-      });
-    } else {
-      await publishNegotiationEvent({
-        type: 'CONTRACT_SIGNATURE_REQUESTED',
-        negotiationId: negotiation.id,
-        triggeredBy: session.user.id,
-        status: negotiation.status,
-        payload: {
-          buyerSigned: Boolean(currentContract?.buyerSignedAt),
-          sellerSigned: Boolean(currentContract?.sellerSignedAt),
-        },
-      });
-    }
+    await publishNegotiationEvent({
+      type: bothSigned ? 'CONTRACT_SIGNATURE_COMPLETED' : 'CONTRACT_SIGNATURE_REQUESTED',
+      negotiationId: negotiation.id,
+      triggeredBy: session.user.id,
+      status: negotiation.status,
+      payload: {
+        envelopeStatus: envelope.status,
+        buyerSigned,
+        sellerSigned,
+        provider: envelope.provider,
+      },
+    });
 
     return NextResponse.json({
       negotiation,
-      message: bothSigned
-        ? 'Vertrag vollständig unterzeichnet'
-        : 'Signatur wurde erfasst. Vertrag wartet auf weitere Unterschriften.',
+      message:
+        envelope.status === ContractEnvelopeStatus.COMPLETED
+          ? 'Vertrag vollständig unterzeichnet'
+          : 'Signatur wurde erfasst und an den Signaturdienst übermittelt.',
     });
   } catch (error) {
     if (error instanceof NegotiationAccessError) {
@@ -195,4 +195,24 @@ export async function POST(
       { status: 500 }
     );
   }
+}
+
+async function resolveParticipants(
+  negotiationId: string,
+  actors: Array<{ id: string; role: ContractParticipant['role'] }>
+): Promise<ContractParticipant[]> {
+  const users = await prisma.user.findMany({
+    where: { id: { in: actors.map((actor) => actor.id) } },
+    select: { id: true, name: true, email: true },
+  });
+
+  return actors.map((actor) => {
+    const match = users.find((user) => user.id === actor.id);
+    return {
+      id: actor.id,
+      role: actor.role,
+      name: match?.name ?? `${actor.role.toLowerCase()}@${negotiationId}`,
+      email: match?.email ?? undefined,
+    } satisfies ContractParticipant;
+  });
 }

@@ -19,7 +19,7 @@ import {
   reloadNegotiationSnapshot,
   resolveAdminFlag,
 } from '@/lib/api/negotiations';
-import { mockEscrowProvider } from '@/lib/integrations/escrow';
+import { getEscrowProvider } from '@/lib/integrations/escrow';
 import { publishNegotiationEvent } from '@/lib/events/negotiations';
 
 const FUNDABLE_STATUSES: NegotiationStatus[] = [
@@ -73,6 +73,16 @@ export async function POST(
       );
     }
 
+    if (!access.negotiation.escrowAccount.providerReference) {
+      return NextResponse.json(
+        {
+          error: 'ESCROW_PROVIDER_REFERENCE_MISSING',
+          message: 'Escrow-Konto besitzt keine Provider-Referenz',
+        },
+        { status: 409 }
+      );
+    }
+
     if (!FUNDABLE_STATUSES.includes(access.negotiation.status)) {
       return NextResponse.json(
         {
@@ -83,9 +93,11 @@ export async function POST(
       );
     }
 
-    const negotiation = await prisma.$transaction(async (tx) => {
-      await mockEscrowProvider.fund({
+    const { snapshot: negotiation, providerResult } = await prisma.$transaction(async (tx) => {
+      const provider = getEscrowProvider();
+      const providerResult = await provider.fund({
         escrowAccountId: access.negotiation.escrowAccount!.id,
+        providerReference: access.negotiation.escrowAccount!.providerReference!,
         amount: validation.data.amount,
         type: EscrowTransactionType.FUND,
         reference: validation.data.reference,
@@ -96,7 +108,12 @@ export async function POST(
           escrowAccountId: access.negotiation.escrowAccount!.id,
           type: EscrowTransactionType.FUND,
           amount: validation.data.amount,
-          reference: validation.data.reference,
+          reference: providerResult.externalTransactionId,
+          occurredAt: providerResult.occurredAt,
+          metadata: {
+            providerBalance: providerResult.balance,
+            requestedReference: validation.data.reference ?? null,
+          },
         },
       });
 
@@ -104,7 +121,7 @@ export async function POST(
         where: { id: access.negotiation.escrowAccount!.id },
         data: {
           fundedAmount: { increment: validation.data.amount },
-          status: EscrowStatus.AWAITING_FUNDS,
+          status: providerResult.status,
         },
       });
 
@@ -157,7 +174,7 @@ export async function POST(
         throw new Error('NEGOTIATION_SNAPSHOT_MISSING');
       }
 
-      return snapshot;
+      return { snapshot, providerResult };
     });
 
     await publishNegotiationEvent({
@@ -167,7 +184,10 @@ export async function POST(
       status: negotiation.status,
       payload: {
         amount: validation.data.amount,
-        reference: validation.data.reference,
+        requestedReference: validation.data.reference ?? null,
+        providerReference: access.negotiation.escrowAccount.providerReference,
+        transactionReference: providerResult.externalTransactionId,
+        providerBalance: providerResult.balance,
       },
     });
 
