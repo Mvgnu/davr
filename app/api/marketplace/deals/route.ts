@@ -11,6 +11,8 @@ import {
 } from '@/lib/api/validation';
 import { reloadNegotiationSnapshot } from '@/lib/api/negotiations';
 import { publishNegotiationEvent } from '@/lib/events/negotiations';
+import { getEscrowProvider } from '@/lib/integrations/escrow';
+import { deriveNegotiationPremiumTier, getPremiumProfileForUser } from '@/lib/premium/entitlements';
 
 const ACTIVE_NEGOTIATION_STATUSES: NegotiationStatus[] = [
   NegotiationStatus.INITIATED,
@@ -63,6 +65,7 @@ export async function POST(request: NextRequest) {
         id: true,
         seller_id: true,
         status: true,
+        isPremiumWorkflow: true,
       },
     });
 
@@ -106,6 +109,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const buyerProfile = await getPremiumProfileForUser(session.user.id);
+    const negotiationPremiumTier = deriveNegotiationPremiumTier({
+      listingIsPremium: Boolean(listing.isPremiumWorkflow),
+      buyerTier: buyerProfile.tier,
+    });
+
     const negotiation = await prisma.$transaction(async (tx) => {
       const createdNegotiation = await tx.negotiation.create({
         data: {
@@ -116,6 +125,7 @@ export async function POST(request: NextRequest) {
           expiresAt: expiresAt ?? null,
           currency,
           notes: message,
+          premiumTier: negotiationPremiumTier ?? undefined,
           offers: {
             create: {
               senderId: session.user.id,
@@ -140,7 +150,25 @@ export async function POST(request: NextRequest) {
             },
           },
         },
+        include: { escrowAccount: true },
       });
+
+      if (createdNegotiation.escrowAccount) {
+        const provider = getEscrowProvider();
+        const providerAccount = await provider.createAccount({
+          negotiationId: createdNegotiation.id,
+          expectedAmount: expectedEscrowAmount,
+          currency,
+        });
+
+        await tx.escrowAccount.update({
+          where: { id: createdNegotiation.escrowAccount.id },
+          data: {
+            providerReference: providerAccount.providerReference,
+            status: providerAccount.status,
+          },
+        });
+      }
 
       const snapshot = await reloadNegotiationSnapshot(createdNegotiation.id, tx);
       if (!snapshot) {

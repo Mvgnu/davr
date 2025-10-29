@@ -3,6 +3,55 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import { prisma } from '@/lib/db/prisma'; // Assuming @ alias is set up for src or lib
 import * as bcrypt from 'bcryptjs';
 
+export async function authorizeWithCredentials(credentials: Record<string, string> | undefined | null) {
+  if (!credentials?.email || !credentials.password) {
+    console.error('Missing credentials');
+    return null;
+  }
+
+  // Find user in PostgreSQL database via Prisma
+  const user = await prisma.user.findUnique({
+    where: { email: credentials.email },
+  });
+
+  if (!user) {
+    console.error('No user found with email:', credentials.email);
+    return null; // User not found
+  }
+
+  // Check if user registered with credentials (has a password)
+  if (!user.password) {
+    console.error('User found but no password set (maybe OAuth user?)');
+    // Optionally, handle this case differently (e.g., prompt to link account)
+    return null;
+  }
+
+  // Validate password using bcryptjs
+  const isValidPassword = await bcrypt.compare(credentials.password, user.password);
+
+  if (!isValidPassword) {
+    console.error('Invalid password for user:', credentials.email);
+    return null; // Password invalid
+  }
+
+  console.log('Credentials validated successfully for:', user.email);
+  // Return user object if credentials are valid
+  // Exclude password from the returned user object
+  const { password, ...userFromDb } = user;
+
+  // Ensure the returned object matches the NextAuth User type precisely
+  // Map null values from Prisma to undefined for name, email, image
+  return {
+    id: userFromDb.id,
+    name: userFromDb.name ?? undefined,
+    email: userFromDb.email ?? undefined,
+    image: userFromDb.image ?? undefined,
+    emailVerified: userFromDb.emailVerified, // Keep as Date | null
+    role: userFromDb.role, // Include role for RBAC
+    isAdmin: userFromDb.isAdmin, // Keep for backward compatibility
+  };
+}
+
 export const authOptions: NextAuthOptions = {
   // adapter: PrismaAdapter(prisma),
   providers: [
@@ -13,55 +62,7 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials.password) {
-          console.error('Missing credentials');
-          return null;
-        }
-
-        // Find user in PostgreSQL database via Prisma
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
-        });
-
-        if (!user) {
-          console.error('No user found with email:', credentials.email);
-          return null; // User not found
-        }
-
-        // Check if user registered with credentials (has a password)
-        if (!user.password) {
-          console.error('User found but no password set (maybe OAuth user?)');
-          // Optionally, handle this case differently (e.g., prompt to link account)
-          return null;
-        }
-
-        // Validate password using bcryptjs
-        const isValidPassword = await bcrypt.compare(
-          credentials.password,
-          user.password
-        );
-
-        if (!isValidPassword) {
-          console.error('Invalid password for user:', credentials.email);
-          return null; // Password invalid
-        }
-
-        console.log('Credentials validated successfully for:', user.email);
-        // Return user object if credentials are valid
-        // Exclude password from the returned user object
-        const { password, ...userFromDb } = user;
-
-        // Ensure the returned object matches the NextAuth User type precisely
-        // Map null values from Prisma to undefined for name, email, image
-        return {
-          id: userFromDb.id,
-          name: userFromDb.name ?? undefined,
-          email: userFromDb.email ?? undefined,
-          image: userFromDb.image ?? undefined,
-          emailVerified: userFromDb.emailVerified, // Keep as Date | null
-          role: userFromDb.role, // Include role for RBAC
-          isAdmin: userFromDb.isAdmin, // Keep for backward compatibility
-        };
+        return authorizeWithCredentials(credentials);
       }
     })
     // Add other providers like Google, GitHub here if needed

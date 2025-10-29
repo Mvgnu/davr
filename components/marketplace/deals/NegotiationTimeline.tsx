@@ -13,6 +13,7 @@ interface NegotiationTimelineProps {
   activities: NegotiationActivity[];
   statusHistory: NegotiationStatusEntry[];
   expiresAt?: string | null;
+  unreadCount?: number;
 }
 
 interface TimelineEvent {
@@ -42,7 +43,7 @@ function mapActivityToIcon(activity: NegotiationActivity): TimelineEvent['icon']
   return 'activity';
 }
 
-export function NegotiationTimeline({ activities, statusHistory, expiresAt }: NegotiationTimelineProps) {
+export function NegotiationTimeline({ activities, statusHistory, expiresAt, unreadCount = 0 }: NegotiationTimelineProps) {
   const events = useMemo(() => {
     const merged: TimelineEvent[] = [
       ...activities.map((activity) => ({
@@ -92,7 +93,14 @@ export function NegotiationTimeline({ activities, statusHistory, expiresAt }: Ne
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
-        <CardTitle className="text-lg font-semibold">Verhandlungschronik</CardTitle>
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-lg font-semibold">Verhandlungschronik</CardTitle>
+          {unreadCount > 0 ? (
+            <Badge variant="default" className="text-xs font-medium">
+              {unreadCount} neu
+            </Badge>
+          ) : null}
+        </div>
         {slaBadge}
       </CardHeader>
       <CardContent className="space-y-4">

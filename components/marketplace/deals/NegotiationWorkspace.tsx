@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import { NegotiationContractCard } from '@/components/marketplace/deals/Negotiat
 import { NegotiationOfferComposer } from '@/components/marketplace/deals/NegotiationOfferComposer';
 import { NegotiationTimeline } from '@/components/marketplace/deals/NegotiationTimeline';
 import { EscrowStatusCard } from '@/components/marketplace/deals/EscrowStatusCard';
+import { NegotiationPremiumInsights } from '@/components/marketplace/deals/NegotiationPremiumInsights';
 import { useNegotiationWorkspace } from '@/hooks/useNegotiationWorkspace';
 import type { NegotiationSnapshot } from '@/types/negotiations';
 
@@ -43,8 +44,10 @@ export function NegotiationWorkspace({
   const [creationError, setCreationError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isUpgrading, setIsUpgrading] = useState(false);
 
-  const { negotiation, actions, isLoading, error } = useNegotiationWorkspace(activeNegotiationId);
+  const { negotiation, actions, isLoading, error, realtime, refresh } = useNegotiationWorkspace(activeNegotiationId);
+  const upgradeTrackedRef = useRef<string | null>(null);
 
   const role: 'BUYER' | 'SELLER' | 'ADMIN' | null = useMemo(() => {
     if (!userId) {
@@ -139,6 +142,53 @@ export function NegotiationWorkspace({
     }
   };
 
+  useEffect(() => {
+    if (!negotiation?.id || !negotiation.premium?.upgradePrompt) {
+      return;
+    }
+
+    if (upgradeTrackedRef.current === negotiation.id) {
+      return;
+    }
+
+    upgradeTrackedRef.current = negotiation.id;
+    void fetch('/api/marketplace/premium/subscription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'UPGRADE_CTA_VIEWED',
+        negotiationId: negotiation.id,
+        tier: negotiation.premiumTier ?? 'PREMIUM',
+      }),
+    }).catch((trackError) => {
+      console.error('[premium][cta-view-failed]', trackError);
+    });
+  }, [negotiation?.id, negotiation?.premium?.upgradePrompt]);
+
+  const handleUpgradeClick = async (currentNegotiation: NegotiationSnapshot) => {
+    try {
+      setIsUpgrading(true);
+      setActionError(null);
+      await fetch('/api/marketplace/premium/subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'START_TRIAL',
+          tier: currentNegotiation.premiumTier ?? 'PREMIUM',
+          negotiationId: currentNegotiation.id,
+        }),
+      });
+      upgradeTrackedRef.current = null;
+      await refresh();
+    } catch (upgradeError) {
+      setActionError(upgradeError instanceof Error ? upgradeError.message : 'Upgrade konnte nicht gestartet werden');
+    } finally {
+      setIsUpgrading(false);
+    }
+  };
+
   const renderCreationCard = () => (
     <Card>
       <CardHeader>
@@ -207,10 +257,41 @@ export function NegotiationWorkspace({
 
     return (
       <div className="space-y-6">
+        {snapshot.premium?.upgradePrompt ? (
+          <Card className="border-primary/40 bg-primary/5">
+            <CardHeader>
+              <CardTitle>{snapshot.premium.upgradePrompt.headline}</CardTitle>
+              <CardDescription>{snapshot.premium.upgradePrompt.description}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={() => handleUpgradeClick(snapshot)} disabled={isUpgrading}>
+                {isUpgrading ? 'Aktualisiere…' : snapshot.premium.upgradePrompt.cta}
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+
         {actionError ? (
           <Alert variant="destructive">
             <AlertDescription>{actionError}</AlertDescription>
           </Alert>
+        ) : null}
+        {realtime?.slaStatus === 'WARNING' ? (
+          <Alert variant="default" className="border-amber-300 bg-amber-50 text-amber-900">
+            <AlertDescription>
+              SLA läuft bald ab. Bitte handeln Sie zeitnah, um Verzögerungen zu vermeiden.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {realtime?.slaStatus === 'BREACHED' ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              SLA verletzt – prüfen Sie unverzüglich die nächsten Schritte oder eskalieren Sie an das Team.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {snapshot.premium?.viewer.hasAdvancedAnalytics ? (
+          <NegotiationPremiumInsights negotiation={snapshot} />
         ) : null}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="xl:col-span-2 space-y-6">
@@ -218,6 +299,7 @@ export function NegotiationWorkspace({
               activities={snapshot.activities ?? []}
               statusHistory={snapshot.statusHistory ?? []}
               expiresAt={snapshot.expiresAt}
+              unreadCount={realtime?.unreadCount ?? 0}
             />
             <NegotiationContractCard
               negotiation={snapshot}

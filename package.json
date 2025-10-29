@@ -30,7 +30,8 @@
     "prisma:seed": "ts-node -r tsconfig-paths/register --project tsconfig.json prisma/seed.ts",
     "test": "jest --config jest.config.cjs",
     "test:watch": "jest --config jest.config.cjs --watch",
-    "test:coverage": "jest --config jest.config.cjs --coverage"
+    "test:coverage": "jest --config jest.config.cjs --coverage",
+    "jobs:start": "ts-node --project tsconfig.json scripts/marketplace-scheduler.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.0.0",

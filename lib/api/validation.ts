@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { ListingType, ListingStatus, VerificationStatus, OfferType } from '@prisma/client';
+import {
+  ListingType,
+  ListingStatus,
+  NegotiationActivityAudience,
+  NotificationDeliveryStatus,
+  VerificationStatus,
+  OfferType,
+} from '@prisma/client';
 
 /**
  * Common validation schemas for API endpoints
@@ -80,6 +87,21 @@ export const materialQuerySchema = z.object({
 });
 
 export type MaterialQuery = z.infer<typeof materialQuerySchema>;
+
+export const notificationsQuerySchema = z.object({
+  negotiationId: z.string().cuid().optional(),
+  audience: z.nativeEnum(NegotiationActivityAudience).optional(),
+  userId: z.string().cuid().optional(),
+  since: z
+    .string()
+    .datetime({ offset: true })
+    .transform((value) => new Date(value))
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  deliveryStatus: z.nativeEnum(NotificationDeliveryStatus).optional(),
+});
+
+export type NotificationsQuery = z.infer<typeof notificationsQuerySchema>;
 
 // Recycling Center Offer validation
 export const centerOfferSchema = z.object({

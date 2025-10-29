@@ -5,8 +5,11 @@ import {
 } from '@prisma/client';
 
 import { prisma } from '@/lib/db/prisma';
+import { recordPremiumConversionEvent } from '@/lib/premium/entitlements';
+import { PremiumConversionEventType } from '@prisma/client';
 
 import { enqueueNegotiationLifecycleEvent } from './queue';
+import type { NegotiationQueueEnvelope } from './queue';
 
 /**
  * meta: module=negotiation-events version=0.2 owner=platform
@@ -21,6 +24,9 @@ export type NegotiationEventType =
   | 'ESCROW_FUNDED'
   | 'ESCROW_RELEASED'
   | 'ESCROW_REFUNDED'
+  | 'ESCROW_DISPUTE_OPENED'
+  | 'ESCROW_DISPUTE_RESOLVED'
+  | 'ESCROW_STATEMENT_READY'
   | 'NEGOTIATION_SLA_WARNING'
   | 'NEGOTIATION_SLA_BREACHED'
   | 'CONTRACT_SIGNATURE_REQUESTED'
@@ -106,6 +112,27 @@ function resolveEventContext(
         label: 'Treuhandmittel erstattet',
         description: 'Treuhandmittel wurden zurückerstattet.',
       };
+    case 'ESCROW_DISPUTE_OPENED':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_OPENED,
+        label: 'Treuhandkonto im Disput',
+        description: 'Provider meldet einen Streitfall für dieses Escrow-Konto.',
+      };
+    case 'ESCROW_DISPUTE_RESOLVED':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_RESOLVED,
+        label: 'Disput beigelegt',
+        description: 'Escrow-Disput wurde durch den Provider aufgelöst.',
+      };
+    case 'ESCROW_STATEMENT_READY':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_STATEMENT_READY,
+        label: 'Provider-Kontoauszug verfügbar',
+        description: 'Neuer Escrow-Statement eingetroffen – Reconciliation benötigt.',
+      };
     case 'NEGOTIATION_SLA_WARNING':
       return {
         audience: NegotiationActivityAudience.ALL,
@@ -163,19 +190,85 @@ async function persistNegotiationActivity(
   });
 }
 
+async function resolveNotificationChannels(
+  event: NegotiationDomainEvent & { occurredAt: Date },
+  context: NegotiationEventHandlerContext
+): Promise<string[]> {
+  const channels = new Set<string>();
+  channels.add('events:all');
+  channels.add(`negotiation:${event.negotiationId}`);
+  channels.add(`audience:${context.audience}`);
+
+  if (context.audience === NegotiationActivityAudience.ALL || context.audience === NegotiationActivityAudience.ADMIN) {
+    channels.add('audience:ADMIN');
+  }
+
+  const negotiation = await prisma.negotiation.findUnique({
+    where: { id: event.negotiationId },
+    select: { buyerId: true, sellerId: true },
+  });
+
+  if (negotiation?.buyerId) {
+    channels.add(`user:${negotiation.buyerId}`);
+  }
+
+  if (negotiation?.sellerId) {
+    channels.add(`user:${negotiation.sellerId}`);
+  }
+
+  if (event.triggeredBy) {
+    channels.add(`user:${event.triggeredBy}`);
+  }
+
+  return Array.from(channels);
+}
+
 async function dispatchToQueue(
   event: NegotiationDomainEvent & { occurredAt: Date },
   context: NegotiationEventHandlerContext
 ) {
-  await enqueueNegotiationLifecycleEvent({
+  const channels = await resolveNotificationChannels(event, context);
+
+  const envelope: NegotiationQueueEnvelope = {
     ...event,
     occurredAt: event.occurredAt.toISOString(),
     audience: context.audience,
+    channels,
+  };
+
+  await enqueueNegotiationLifecycleEvent(envelope);
+}
+
+async function trackPremiumMilestones(event: NegotiationDomainEvent & { occurredAt: Date }) {
+  if (event.type !== 'ESCROW_RELEASED' && event.type !== 'CONTRACT_SIGNATURE_COMPLETED') {
+    return;
+  }
+
+  const negotiation = await prisma.negotiation.findUnique({
+    where: { id: event.negotiationId },
+    select: { premiumTier: true, status: true },
+  });
+
+  if (!negotiation?.premiumTier) {
+    return;
+  }
+
+  if (event.type === 'ESCROW_RELEASED' && negotiation.status !== NegotiationStatus.COMPLETED) {
+    return;
+  }
+
+  await recordPremiumConversionEvent({
+    negotiationId: event.negotiationId,
+    userId: event.triggeredBy ?? undefined,
+    eventType: PremiumConversionEventType.PREMIUM_NEGOTIATION_COMPLETED,
+    tier: negotiation.premiumTier ?? undefined,
+    metadata: { sourceEvent: event.type },
   });
 }
 
 registerNegotiationEventHandler(persistNegotiationActivity);
 registerNegotiationEventHandler(dispatchToQueue);
+registerNegotiationEventHandler(trackPremiumMilestones);
 
 export async function publishNegotiationEvent(event: NegotiationDomainEvent) {
   const occurredAt = event.occurredAt ?? new Date();
