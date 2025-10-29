@@ -108,20 +108,57 @@ export const createNegotiationSchema = z.object({
 
 export type CreateNegotiationInput = z.infer<typeof createNegotiationSchema>;
 
-export const offerCounterSchema = z.object({
-  price: z
+export const offerCounterSchema = z
+  .object({
+    price: z
+      .number({ invalid_type_error: 'Preis muss eine Zahl sein' })
+      .positive('Preis muss positiv sein')
+      .optional(),
+    quantity: z
+      .number({ invalid_type_error: 'Menge muss eine Zahl sein' })
+      .positive('Menge muss positiv sein')
+      .optional(),
+    message: z.string().max(1000).optional(),
+    type: z.nativeEnum(OfferType).optional(),
+  })
+  .refine(
+    (data) => typeof data.price === 'number' || typeof data.quantity === 'number',
+    {
+      message: 'Mindestens Preis oder Menge erforderlich',
+      path: ['price'],
+    }
+  );
+
+export type OfferCounterInput = z.infer<typeof offerCounterSchema>;
+
+export const acceptNegotiationSchema = z.object({
+  agreedPrice: z
     .number({ invalid_type_error: 'Preis muss eine Zahl sein' })
     .positive('Preis muss positiv sein')
     .optional(),
-  quantity: z
+  agreedQuantity: z
     .number({ invalid_type_error: 'Menge muss eine Zahl sein' })
     .positive('Menge muss positiv sein')
     .optional(),
-  message: z.string().max(1000).optional(),
-  type: z.nativeEnum(OfferType).optional(),
+  note: z.string().max(1000).optional(),
 });
 
-export type OfferCounterInput = z.infer<typeof offerCounterSchema>;
+export type AcceptNegotiationInput = z.infer<typeof acceptNegotiationSchema>;
+
+export const cancelNegotiationSchema = z.object({
+  reason: z.string().max(1000).optional(),
+});
+
+export type CancelNegotiationInput = z.infer<typeof cancelNegotiationSchema>;
+
+export const escrowMutationSchema = z.object({
+  amount: z
+    .number({ invalid_type_error: 'Betrag muss eine Zahl sein' })
+    .positive('Betrag muss positiv sein'),
+  reference: z.string().max(100).optional(),
+});
+
+export type EscrowMutationInput = z.infer<typeof escrowMutationSchema>;
 
 // Review creation validation
 export const createReviewSchema = z.object({

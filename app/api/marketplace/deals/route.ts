@@ -9,6 +9,8 @@ import {
   validateRequest,
   formatValidationErrors,
 } from '@/lib/api/validation';
+import { reloadNegotiationSnapshot } from '@/lib/api/negotiations';
+import { publishNegotiationEvent } from '@/lib/events/negotiations';
 
 const ACTIVE_NEGOTIATION_STATUSES: NegotiationStatus[] = [
   NegotiationStatus.INITIATED,
@@ -138,14 +140,25 @@ export async function POST(request: NextRequest) {
             },
           },
         },
-        include: {
-          offers: true,
-          statusHistory: true,
-          escrowAccount: true,
-        },
       });
 
-      return createdNegotiation;
+      const snapshot = await reloadNegotiationSnapshot(createdNegotiation.id, tx);
+      if (!snapshot) {
+        throw new Error('NEGOTIATION_SNAPSHOT_MISSING');
+      }
+
+      return snapshot;
+    });
+
+    await publishNegotiationEvent({
+      type: 'NEGOTIATION_CREATED',
+      negotiationId: negotiation.id,
+      triggeredBy: session.user.id,
+      status: negotiation.status,
+      payload: {
+        listingId,
+        expectedEscrowAmount,
+      },
     });
 
     return NextResponse.json(
