@@ -9,7 +9,8 @@ UI work for negotiations and escrow is staged. This document tracks the planned 
   * Consumes `/api/marketplace/deals/[id]` once implemented.
 * `components/marketplace/deals/OfferComposer.tsx`
   * Provides form inputs for counter-offers and acceptance flows.
-  * Validates payloads using shared Zod schemas.
+  * Validates payloads using shared Zod schemas (`offerCounterSchema`, `acceptNegotiationSchema`).
+  * Dispatches to `/api/marketplace/deals/[id]/offers` and `/api/marketplace/deals/[id]/accept`.
 * `components/marketplace/deals/EscrowStatusCard.tsx`
   * Highlights funding requirements and escrow activity.
 
@@ -22,8 +23,8 @@ UI work for negotiations and escrow is staged. This document tracks the planned 
 
 ## Admin Oversight
 
-* Add `/app/admin/deals/page.tsx` to monitor pipeline health.
-* Provide filters for status, material, and deal value.
+* Add `/app/admin/deals/page.tsx` to monitor pipeline health using the new GET endpoint.
+* Provide filters for status, material, and deal value and surface escrow status badges (`AWAITING_FUNDS`, `FUNDED`, `REFUNDED`).
 
 ## Dependencies
 
@@ -33,5 +34,6 @@ UI work for negotiations and escrow is staged. This document tracks the planned 
 ## Next Steps
 
 * Scaffold `components/marketplace/deals` directory with Storybook stories for each widget.
-* Implement SWR hooks for negotiation polling before real-time messaging lands.
-* Connect component actions to the new API endpoints as they are implemented.
+* Implement SWR hooks for negotiation polling against `GET /api/marketplace/deals/[id]` before real-time messaging lands.
+* Connect component actions to the new API endpoints (counter, accept, cancel, escrow mutations).
+* Add optimistic UI states for escrow operations using the ledger response payloads.

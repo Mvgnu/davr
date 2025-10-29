@@ -65,11 +65,20 @@ This document tracks the development progress, outlines completed tasks, and def
     *   **Plan:** `docs/plans/recycling-center-filter-search.md`.
 *   `[Timestamp]` - **Task: Implement Edit/Delete Marketplace Listing Functionality.**
 *   `2024-05-16` - **Task: Launch Negotiation & Escrow Foundations.**
-    *   **Status:** Incomplete — requires follow-up iteration.
+    *   **Status:** Incomplete — requires follow-up iteration before production rollout.
     *   **Files Created:** `docs/plans/marketplace-deals.md`, `docs/backend/marketplace-deals.md`, `docs/frontend/marketplace-deals.md`, `docs/backend/integrations/escrow.md`, `app/api/marketplace/deals/route.ts`, `app/api/marketplace/deals/README.md`, `lib/integrations/escrow.ts`, `lib/integrations/README.md`.
     *   **Files Updated:** `prisma/schema.prisma`, `lib/api/validation.ts`, `docs/backend/README.md`, `docs/frontend/README.md`, `docs/progress_tracker.md`.
-    *   **Functionality:** Added Prisma models/enums for negotiations, offers, contracts, and escrow accounts. Implemented POST endpoint to start negotiations with validation, duplicate checks, and transactional creation of related records. Introduced integration abstraction for escrow providers and documented backend/frontend plans. **Gaps:** No consumer-facing UI, limited status handling, escrow provider still mocked, and negotiation lifecycle lacks counter-offer/acceptance endpoints.
-    *   **Plan:** `docs/plans/marketplace-deals.md` (needs extension for follow-up milestones).
+    *   **Functionality:** Added Prisma models/enums for negotiations, offers, contracts, and escrow accounts. Implemented POST endpoint to start negotiations with validation, duplicate checks, and transactional creation of related records. Introduced integration abstraction for escrow providers and documented backend/frontend plans.
+    *   **Follow-Up Progress (Current Session):**
+        * Delivered counter-offer, acceptance, cancellation, and escrow fund/release/refund endpoints with lifecycle guardrails and status history logging.
+        * Added a negotiation detail GET route plus reusable access helpers and event publishing hooks for messaging/admin fan-out.
+        * Enforced SLA expiration handling that auto-closes stale negotiations and shuts down related escrow accounts.
+    *   **Outstanding Gaps Before Production:**
+        * Contract signature flow still stops at drafting—requires signature capture and progression to `CONTRACT_SIGNED`.
+        * Messaging/notification integration remains manual despite the new event emitter.
+        * Buyer/seller UI workspaces (timeline, offer composer, escrow widgets) and premium dashboards remain unimplemented.
+        * Escrow adapter is still mocked; no provider webhooks, dispute state handling, reconciliation exports, or KYC gating.
+    *   **Plan:** `docs/plans/marketplace-deals.md` (extended with strategic follow-up milestones).
 *   `[Timestamp]` - **Task: Implement Materials List & Detail Pages.**
     *   **Status:** Completed.
     *   **Files Created:** `app/materials/page.tsx`, `app/api/materials/[slug]/route.ts`, `app/materials/[slug]/page.tsx`, `docs/backend/materials/README.md`.
