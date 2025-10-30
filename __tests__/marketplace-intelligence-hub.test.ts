@@ -127,6 +127,62 @@ describe('marketplace intelligence hub', () => {
             },
           ],
         },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'neg-historical-1',
+          status: 'COMPLETED',
+          initiatedAt: new Date('2025-08-10T10:00:00Z'),
+          agreedPrice: 750,
+          agreedQuantity: 2,
+          premiumTier: 'PREMIUM',
+          listing: {
+            id: 'list-1',
+            title: 'Kupferschrott',
+            quantity: 2,
+            material_id: 'mat-1',
+            material: {
+              id: 'mat-1',
+              name: 'Kupfer',
+              slug: 'copper',
+              category_icon: 'metal',
+              price_unit: 'tonne',
+            },
+          },
+          offers: [
+            {
+              price: 750,
+              createdAt: new Date('2025-08-10T08:00:00Z'),
+            },
+          ],
+        },
+        {
+          id: 'neg-historical-2',
+          status: 'COMPLETED',
+          initiatedAt: new Date('2025-07-20T10:00:00Z'),
+          agreedPrice: 600,
+          agreedQuantity: 1,
+          premiumTier: 'PREMIUM',
+          listing: {
+            id: 'list-2',
+            title: 'Aluminium',
+            quantity: 3,
+            material_id: 'mat-2',
+            material: {
+              id: 'mat-2',
+              name: 'Aluminium',
+              slug: 'aluminium',
+              category_icon: 'metal',
+              price_unit: 'tonne',
+            },
+          },
+          offers: [
+            {
+              price: 600,
+              createdAt: new Date('2025-07-19T12:00:00Z'),
+            },
+          ],
+        },
       ]);
 
     listingFindMany.mockResolvedValue([
@@ -153,6 +209,9 @@ describe('marketplace intelligence hub', () => {
     expect(overview.supplyGaps.length).toBe(1);
     expect(overview.supplyGaps[0]).toMatchObject({ materialId: 'mat-2', supplyDemandDelta: 1 });
     expect(overview.premiumRecommendations.length).toBeGreaterThan(0);
+    expect(overview.trendingMaterials[0].forecast.projectedNegotiations).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(overview.trendingMaterials[0].forecast.series)).toBe(true);
+    expect(Array.isArray(overview.anomalyAlerts)).toBe(true);
 
     jest.useRealTimers();
   });
@@ -160,7 +219,7 @@ describe('marketplace intelligence hub', () => {
   it('handles empty datasets gracefully', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2025-10-30T00:00:00Z'));
 
-    negotiationFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    negotiationFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     listingFindMany.mockResolvedValue([]);
 
     const { getMarketplaceIntelligenceOverview } = await import('@/lib/intelligence/hub');

@@ -39,7 +39,13 @@ export type NegotiationEventType =
   | 'CONTRACT_REVISION_SUBMITTED'
   | 'CONTRACT_REVISION_ACCEPTED'
   | 'CONTRACT_REVISION_REJECTED'
-  | 'CONTRACT_REVISION_COMMENTED';
+  | 'CONTRACT_REVISION_COMMENTED'
+  | 'FULFILMENT_ORDER_CREATED'
+  | 'FULFILMENT_ORDER_SCHEDULED'
+  | 'FULFILMENT_ORDER_UPDATED'
+  | 'FULFILMENT_MILESTONE_RECORDED'
+  | 'FULFILMENT_REMINDER_SCHEDULED'
+  | 'FULFILMENT_REMINDER_SENT';
 
 export interface NegotiationDomainEvent {
   type: NegotiationEventType;
@@ -48,6 +54,7 @@ export interface NegotiationDomainEvent {
   status?: NegotiationStatus;
   payload?: Record<string, unknown>;
   occurredAt?: Date;
+  channels?: string[];
 }
 
 export interface NegotiationEventHandlerContext {
@@ -233,6 +240,63 @@ function resolveEventContext(
         label: 'Kommentar zur Vertragsrevision',
         description: 'Ein Diskussionseintrag wurde zu einer Vertragsstelle hinzugefügt.',
       };
+    case 'FULFILMENT_ORDER_CREATED':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.FULFILMENT_ORDER_CREATED,
+        label: 'Fulfilmentauftrag erstellt',
+        description: 'Das Operations-Team hat einen neuen Fulfilmentauftrag aufgesetzt.',
+      };
+    case 'FULFILMENT_ORDER_SCHEDULED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.FULFILMENT_ORDER_SCHEDULED,
+        label: 'Fulfilmenttermin bestätigt',
+        description: 'Abhol- und Lieferfenster wurden bestätigt und freigegeben.',
+      };
+    case 'FULFILMENT_ORDER_UPDATED': {
+      const escalation =
+        event.payload && typeof event.payload === 'object'
+          ? (event.payload as Record<string, unknown>).escalation
+          : undefined;
+
+      if (escalation) {
+        return {
+          audience: NegotiationActivityAudience.ADMIN,
+          activityType: NegotiationActivityType.FULFILMENT_ORDER_UPDATED,
+          label: 'Fulfilment SLA verletzt',
+          description: 'Ein Fulfilmentauftrag benötigt sofortige Aufmerksamkeit wegen einer SLA-Verletzung.',
+        };
+      }
+
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.FULFILMENT_ORDER_UPDATED,
+        label: 'Fulfilmentauftrag aktualisiert',
+        description: 'Der Fulfilmentauftrag wurde mit neuen Informationen aktualisiert.',
+      };
+    }
+    case 'FULFILMENT_MILESTONE_RECORDED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.FULFILMENT_MILESTONE_RECORDED,
+        label: 'Fulfilment-Meilenstein dokumentiert',
+        description: 'Ein neuer Status wurde im Fulfilment-Prozess festgehalten.',
+      };
+    case 'FULFILMENT_REMINDER_SCHEDULED':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.FULFILMENT_REMINDER_SCHEDULED,
+        label: 'Fulfilment-Erinnerung geplant',
+        description: 'Eine zeitkritische Fulfilment-Erinnerung wurde eingeplant.',
+      };
+    case 'FULFILMENT_REMINDER_SENT':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.FULFILMENT_REMINDER_SENT,
+        label: 'Fulfilment-Erinnerung versendet',
+        description: 'Eine geplante Fulfilment-Erinnerung wurde ausgelöst.',
+      };
     default:
       return {
         audience: NegotiationActivityAudience.PARTICIPANTS,
@@ -300,12 +364,14 @@ async function dispatchToQueue(
   context: NegotiationEventHandlerContext
 ) {
   const channels = await resolveNotificationChannels(event, context);
+  const extraChannels = event.channels ?? [];
+  const mergedChannels = Array.from(new Set([...channels, ...extraChannels]));
 
   const envelope: NegotiationQueueEnvelope = {
     ...event,
     occurredAt: event.occurredAt.toISOString(),
     audience: context.audience,
-    channels,
+    channels: mergedChannels,
   };
 
   await enqueueNegotiationLifecycleEvent(envelope);

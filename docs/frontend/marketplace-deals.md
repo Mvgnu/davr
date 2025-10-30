@@ -21,20 +21,36 @@ console that ship with the first iteration.
 * `components/marketplace/deals/NegotiationOfferComposer.tsx`
   * Handles counter and acceptance flows with optimistic updates and form validation.
   * Dispatches to `/api/marketplace/deals/[id]/offers` and `/api/marketplace/deals/[id]/accept`.
+  * Buttons werden automatisch deaktiviert, sobald der Workspace aufgrund von Dunning oder Sitzplatzüberschreitung gesperrt ist;
+    die Workspace-Hülle blendet dann eine Sperrkarte mit Upgrade-/Billing-CTA ein.
 * `components/marketplace/deals/NegotiationPremiumInsights.tsx`
-  * Premium-only analytics widget showing offer iteration counts, Verhandlungsdauer, and SLA-Plan.
+  * Premium-only analytics widget showing offer iteration counts, Verhandlungsdauer, SLA-Plan sowie aktuelle Sitzplatzbelegung.
+  * Blockt den Inhalt mit Dunning- bzw. Sitzplatz-Bannern wenn `premium.viewer.dunningState === 'PAYMENT_FAILED'` oder
+    `premium.viewer.isSeatCapacityExceeded` gesetzt ist.
   * Displays an upsell card linking to `/admin/deals/operations/upgrade` whenever `premium.viewer.hasAdvancedAnalytics` is
-    false or the profile has an `upgradePrompt` message (trial expired/cancelled).
+    false or das Profil eine `upgradePrompt`-Nachricht (Trial-Ende, Downgrade-Hinweis) liefert.
 * `components/marketplace/deals/NegotiationDisputePanel.tsx`
   * New escalation card that lists the latest disputes, their severity, SLA due date, and attached evidence.
   * Exposes a dialog for buyers/sellers to raise disputes with summary, outcome expectation, and optional evidence links.
   * Highlights Treuhand-Holds, Vergleichsvorschläge, Auszahlungen sowie SLA-Verletzungen (Badge) und
-    Submits to `/api/marketplace/deals/[id]/disputes` while disabling creation when an open dispute already exists.
+    Submits to `/api/marketplace/deals/[id]/disputes`.
+  * Fast-Track-Erstellung wird deaktiviert, sobald `premium.viewer.dunningState === 'PAYMENT_FAILED'` außerhalb der
+    Grace-Period liegt, das Sitzplatzlimit überschritten wurde oder dem Workspace das `DISPUTE_FAST_TRACK`-Entitlement fehlt;
+    die UI zeigt dazu einen erklärenden Alert inklusive Upgrade-Hinweis.
 * `components/marketplace/deals/NegotiationFulfilmentBoard.tsx`
   * Logistics board surfaced directly in the workspace, rendering fulfilment orders, pickup/delivery windows, carrier details,
     milestones, and scheduled reminders with real-time negotiation activity updates.
   * Participants can create or edit orders, log milestones, and plan reminders via the new fulfilment REST endpoints. Admins
     inherit the same controls for triage.
+  * Displays carrier sync state, last manifest refresh, and streaming tracking events once a valid `carrierCode` is provided. The
+    creation form now includes a `Carrier-Code` field to trigger provider registration.
+  * Surfaces computed SLA analytics (pickup/delivery delay badges) using `getFulfilmentSlaAnalytics` results so operations teams
+    can prioritise overdue shipments directly within the board.
+  * SLA-kritische Abholverstöße zeigen eine Alert-Pill mit dem E-Mail-/SMS-Versandstatus; die Komponente liest dafür die neuen
+    `slaAlertsQueued` Job-Metadaten und blendet eine „Concierge benachrichtigt“-Notiz ein.
+  * Concierge-spezifische Eingaben sind schreibgeschützt, wenn `premium.viewer.hasConciergeSla` fehlt, `isSeatCapacityExceeded`
+    true ist oder eine Zahlungsstörung (`dunningState === 'PAYMENT_FAILED'` außerhalb der Grace-Period) erkannt wird. In diesen
+    Fällen erscheint eine CTA-Karte mit Link zu `/admin/deals/operations/upgrade`.
 * `components/marketplace/deals/AdminPremiumUpgradeFlow.tsx`
   * Administrator CTA that calls `/api/marketplace/premium/subscription`.
   * On successful `START_TRIAL`/`UPGRADE_CONFIRMED` actions the component now
@@ -46,6 +62,9 @@ console that ship with the first iteration.
   * Surfaces signature state, provider envelope lifecycle, and exposes document preview links via `/api/marketplace/deals/[id]/contracts/sign`.
   * Hosts the new redlining workspace: renders revision history, allows buyers/sellers/admins to submit revisions with summary, body, and attachment links, and wires accept/reject actions to `/api/marketplace/deals/[id]/contracts/revisions`.
   * Displays inline comments per revision with resolve/reopen controls. Mutation handlers refresh the workspace via the SWR `refresh` callback so negotiation snapshots stay consistent after collaboration events.
+  * Generates clause-level and inline diffs via `lib/contracts/diff.ts`, including add/remove/modify rollups and expandable detailed views.
+  * Persists revision drafts offline, showing conflict alerts when cached fingerprints diverge from the latest server revision or when the workspace reconnects after outages.
+  * Respektiert Premium-Sperren: Bei Zahlungsfehlern außerhalb der Grace-Period oder Sitzplatzüberlauf werden Vertragsaktionen deaktiviert und die Workspace-Sperrkarte verweist auf die nächsten Schritte.
 
 ## Listing Detail Integration
 
@@ -111,7 +130,19 @@ console that ship with the first iteration.
         "entitlements": ["ADVANCED_ANALYTICS", "DISPUTE_FAST_TRACK"],
         "hasAdvancedAnalytics": true,
         "hasConciergeSla": false,
-        "hasDisputeFastTrack": true
+        "hasDisputeFastTrack": true,
+        "seatCapacity": 5,
+        "seatsInUse": 4,
+        "seatsAvailable": 1,
+        "isSeatCapacityExceeded": false,
+        "gracePeriodEndsAt": null,
+        "isInGracePeriod": false,
+        "isDowngradeScheduled": false,
+        "downgradeAt": null,
+        "downgradeTargetTier": "STANDARD",
+        "dunningState": "NONE",
+        "lastPaymentFailureAt": null,
+        "lastReminderSentAt": null
       }
     },
     "disputes": [
@@ -154,7 +185,9 @@ zusätzlich ein Tier-Dropdown bereit: Der `premiumTier`-Parameter (`ALL`, `PREMI
 und aktive Abos auf die gewünschte Kohorte. Ein Formular-POST auf
 `/api/admin/jobs/[jobName]/run` löst Jobs manuell aus; Concierge-Berechtigungen werden bei fehlendem Premium-Profil explizit
 eingefordert und verlinken jetzt auf `/admin/deals/operations/upgrade`. Die Concierge-CTA liest Headline und Call-to-Action aus
-`premiumProfile.upgradePrompt`, sodass Trial-Ende, Zahlungsfehler oder Kündigungen unmittelbar reflektiert werden.
+`premiumProfile.upgradePrompt`, sodass Trial-Ende, Zahlungsfehler oder Kündigungen unmittelbar reflektiert werden. Neu blenden
+die Admin-Ansicht automatische Warnkarten ein, wenn `premiumProfile.dunningState === 'PAYMENT_FAILED'` (Grace-Period Hinweis)
+oder `premiumProfile.isSeatCapacityExceeded` (Sitzplatzverwaltung) greift – beide verlinken in den Billing-Bereich.
 Seit 2025-10-30T02:40Z hebt der Funnel zusätzlich Vorperioden-Vergleiche hervor: Die `comparison`-Deltas werden in der UI als
 grüne/rote Inline-Werte dargestellt und basieren auf identischen Fenstergrößen, sodass Growth- oder Rückgänge sofort ins Auge
 fallen.
@@ -163,16 +196,25 @@ Formular (`insightsWindow`, `insightsScope`) mit dem `AdminMarketplaceIntelligen
 die fünf wichtigsten Materialtrends, identifizierte Versorgungslücken und automatisch generierte Premium-Empfehlungen. Der
 Segment-Schalter erlaubt wahlweise einen Premium-only Blick oder die Gesamtmarkt-Perspektive, ohne dass die anderen Query-
 Parameter (Premium-Funnel) verloren gehen.
+Neu seit 2025-11-07T02:45Z: Die Karte reichert Trends mit Forecast-Spalten (projizierte Negotiations & GMV samt Confidence) an,
+visualisiert Anomalien aus einem vierfachen Lookback als separate Alert-Liste und kennzeichnet Premium-Empfehlungen mit
+`targetTier`-Badges plus konkreten Aktionsvorschlägen. Damit lassen sich Concierge- und Core-Premium-Workflows gezielt
+aussteuern und mit den Premium-Insights im Workspace synchronisieren.
 Seit 2025-10-30T23:20Z besitzt die Dispute-Kachel eine strukturierte Queue auf Basis der neuen `DealDispute`-Modelle: Spalten
 für Summary, Lifecycle-Status (Badges), Severity (farbcodierte Outlines), SLA-Fälligkeit, Assignment und letzte Aktivität helfen
 Admins, Engpässe zu priorisieren. Inline-Formulare triggern die Server Actions `updateDisputeStatusAction` und
 `assignDisputeAction`, womit Disputes übernommen, eskaliert, gelöst oder neu zugewiesen werden können (inkl. Audit-Trail).
 Seit 2025-10-30T04:25Z zeigen die Zeilen zusätzlich Hold-, Vergleichs- und Auszahlungsbeträge an und binden
-Seit 2025-10-30T00:45Z ergänzt eine Fulfilment-Kachel die Operations-Ansicht: Sie liest die Metadaten des Jobs
-`fulfilment-logistics-sweep` aus, zeigt ausstehende Erinnerungen, zuletzt versandte Reminder und eskalierte Abholfenster an und
-erlaubt mit einem Klick auf den Scheduler-Trigger eine sofortige Neu-Ausführung.
 `applyDisputeHoldAction`, `recordDisputeCounterProposalAction` sowie `settleDisputePayoutAction` an neue Inline-Formulare;
 überfällige SLA-Fenster erhalten ein rotes Badge.
+Neu seit 2025-11-06T08:10Z: Unter jeder Dispute-Zeile erscheint ein Guidance-Grid mit empfohlenen Workflows (inkl. Status-Buttons,
+Workflow-Links und ausklappbaren Nachrichtenvorlagen), einer Kommunikationsliste samt Copy-&-Paste-Texten sowie einer
+Compliance-Checkliste mit SLA-Indikatoren. Daneben visualisiert ein "Dispute Insights"-Card im Kopfbereich offene/eskalierte
+Fälle, die Abschlussgeschwindigkeit, die SLA-Verletzungsrate und ein Win/Loss-Breakdown der letzten 30 Tage.
+Seit 2025-10-30T00:45Z ergänzt eine Fulfilment-Kachel die Operations-Ansicht: Sie liest die Metadaten des Jobs
+`fulfilment-logistics-sweep` aus, zeigt ausstehende Erinnerungen, zuletzt versandte Reminder und eskalierte Abholfenster an und
+markiert parallel die anstehenden E-Mail-/SMS-Alarmierungen. Ein Klick auf den Scheduler-Trigger erlaubt weiterhin die
+sofortige Neu-Ausführung.
 Seit 2025-10-30T03:45Z ergänzt eine scrollbare Tageswerte-Tabelle die Kennzahlen. Die neuesten Conversion-Ereignisse stehen
 oberhalb, inklusive Tages-Conversionsraten, damit Growth-Experimente und Anomalien schneller erkannt werden.
 

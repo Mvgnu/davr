@@ -213,39 +213,67 @@ export const createDealDisputeSchema = z.object({
 
 export type CreateDealDisputeInput = z.infer<typeof createDealDisputeSchema>;
 
-const fulfilmentWindowSchema = z
-  .object({
-    pickupWindowStart: z.coerce.date().optional().nullable(),
-    pickupWindowEnd: z.coerce.date().optional().nullable(),
-  })
-  .refine(
-    (data) =>
-      !(data.pickupWindowStart && data.pickupWindowEnd) ||
-      data.pickupWindowEnd.getTime() >= data.pickupWindowStart.getTime(),
-    {
-      message: 'Abholzeitraum-Ende muss nach dem Start liegen',
-      path: ['pickupWindowEnd'],
-    }
-  );
+const fulfilmentWindowFields = {
+  pickupWindowStart: z.coerce.date().optional().nullable(),
+  pickupWindowEnd: z.coerce.date().optional().nullable(),
+} as const;
 
-export const createFulfilmentOrderSchema = fulfilmentWindowSchema.extend({
+function isValidFulfilmentWindow(data: { pickupWindowStart?: Date | null; pickupWindowEnd?: Date | null }) {
+  return (
+    !(data.pickupWindowStart && data.pickupWindowEnd) ||
+    data.pickupWindowEnd.getTime() >= data.pickupWindowStart.getTime()
+  );
+}
+
+const fulfilmentWindowSchema = z
+  .object(fulfilmentWindowFields)
+  .refine(isValidFulfilmentWindow, {
+    message: 'Abholzeitraum-Ende muss nach dem Start liegen',
+    path: ['pickupWindowEnd'],
+  });
+
+const fulfilmentOrderShape = {
+  ...fulfilmentWindowFields,
   reference: z.string().max(60).optional().nullable(),
   pickupLocation: z.string().max(200).optional().nullable(),
   deliveryLocation: z.string().max(200).optional().nullable(),
+  carrierCode: z
+    .string()
+    .trim()
+    .max(40)
+    .transform((value) => value.toUpperCase())
+    .optional()
+    .nullable(),
   carrierName: z.string().max(120).optional().nullable(),
   carrierContact: z.string().max(120).optional().nullable(),
   carrierServiceLevel: z.string().max(120).optional().nullable(),
   trackingNumber: z.string().max(120).optional().nullable(),
   externalId: z.string().max(120).optional().nullable(),
   specialInstructions: z.string().max(1000).optional().nullable(),
-  status: z.nativeEnum(FulfilmentOrderStatus).default(FulfilmentOrderStatus.SCHEDULING).optional(),
-});
+} as const;
+
+export const createFulfilmentOrderSchema = z
+  .object({
+    ...fulfilmentOrderShape,
+    status: z.nativeEnum(FulfilmentOrderStatus)
+      .default(FulfilmentOrderStatus.SCHEDULING)
+      .optional(),
+  })
+  .refine(isValidFulfilmentWindow, {
+    message: 'Abholzeitraum-Ende muss nach dem Start liegen',
+    path: ['pickupWindowEnd'],
+  });
 
 export type CreateFulfilmentOrderInput = z.infer<typeof createFulfilmentOrderSchema>;
 
-export const updateFulfilmentOrderSchema = createFulfilmentOrderSchema.partial().extend({
-  status: z.nativeEnum(FulfilmentOrderStatus).optional(),
-});
+export const updateFulfilmentOrderSchema = z
+  .object(fulfilmentOrderShape)
+  .partial()
+  .extend({ status: z.nativeEnum(FulfilmentOrderStatus).optional() })
+  .refine(isValidFulfilmentWindow, {
+    message: 'Abholzeitraum-Ende muss nach dem Start liegen',
+    path: ['pickupWindowEnd'],
+  });
 
 export type UpdateFulfilmentOrderInput = z.infer<typeof updateFulfilmentOrderSchema>;
 

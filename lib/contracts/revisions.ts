@@ -9,6 +9,7 @@ import {
 
 import { prisma } from '@/lib/db/prisma';
 import { publishNegotiationEvent } from '@/lib/events/negotiations';
+import { syncContractRevisionAttachments } from '@/lib/integrations/storage';
 
 type Attachment = {
   id: string;
@@ -63,6 +64,23 @@ export async function createContractRevision(input: CreateRevisionInput) {
 
     return created;
   });
+
+  if (input.attachments?.length) {
+    try {
+      await syncContractRevisionAttachments({
+        negotiationId: input.negotiationId,
+        contractId: input.contractId,
+        revisionId: revision.id,
+        attachments: input.attachments.map((attachment) => ({
+          name: attachment.name,
+          url: attachment.url,
+          mimeType: attachment.mimeType,
+        })),
+      });
+    } catch (storageError) {
+      console.error('[contract-revision][storage-sync-failed]', storageError);
+    }
+  }
 
   await publishNegotiationEvent({
     type: 'CONTRACT_REVISION_SUBMITTED',

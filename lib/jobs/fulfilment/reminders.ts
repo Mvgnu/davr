@@ -4,6 +4,8 @@ import { prisma } from '@/lib/db/prisma';
 import { markReminderSent } from '@/lib/fulfilment/service';
 import { publishNegotiationEvent } from '@/lib/events/negotiations';
 
+const SLA_ESCALATION_CHANNELS = ['channel:email', 'channel:sms'];
+
 // meta: module=fulfilment-jobs task=reminder-sweep version=0.1 owner=operations
 
 const ESCALATION_STATUSES = [
@@ -16,6 +18,7 @@ export interface FulfilmentSweepMetrics {
   remindersProcessed: number;
   overdueOrdersEscalated: number;
   pendingReminderCount: number;
+  slaAlertsQueued: number;
 }
 
 export async function processFulfilmentReminders(limit = 25): Promise<number> {
@@ -61,7 +64,12 @@ export async function escalateMissedPickups(limit = 25): Promise<number> {
       type: 'FULFILMENT_ORDER_UPDATED',
       negotiationId: order.negotiationId,
       triggeredBy: null,
-      payload: { orderId: order.id, escalation: 'PICKUP_WINDOW_MISSED' },
+      payload: {
+        orderId: order.id,
+        escalation: 'PICKUP_WINDOW_MISSED',
+        severity: 'CRITICAL',
+      },
+      channels: SLA_ESCALATION_CHANNELS,
     });
   }
 
@@ -75,10 +83,12 @@ export async function runFulfilmentLogisticsSweep(): Promise<FulfilmentSweepMetr
 
   const remindersProcessed = await processFulfilmentReminders();
   const overdueOrdersEscalated = await escalateMissedPickups();
+  const slaAlertsQueued = overdueOrdersEscalated;
 
   return {
     pendingReminderCount,
     remindersProcessed,
     overdueOrdersEscalated,
+    slaAlertsQueued,
   };
 }

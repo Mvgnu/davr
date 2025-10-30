@@ -95,6 +95,44 @@ const PremiumConversionEventType = {
   PREMIUM_NEGOTIATION_COMPLETED: 'PREMIUM_NEGOTIATION_COMPLETED',
 } as const;
 
+const PremiumTier = {
+  STANDARD: 'STANDARD',
+  PREMIUM: 'PREMIUM',
+  CONCIERGE: 'CONCIERGE',
+} as const;
+
+const PremiumFeature = {
+  ADVANCED_ANALYTICS: 'ADVANCED_ANALYTICS',
+  DISPUTE_FAST_TRACK: 'DISPUTE_FAST_TRACK',
+  CONCIERGE_SLA: 'CONCIERGE_SLA',
+} as const;
+
+const PremiumSubscriptionStatus = {
+  ACTIVE: 'ACTIVE',
+  CANCELED: 'CANCELED',
+  PAST_DUE: 'PAST_DUE',
+} as const;
+
+const FulfilmentOrderStatus = {
+  DRAFT: 'DRAFT',
+  SCHEDULING: 'SCHEDULING',
+  SCHEDULED: 'SCHEDULED',
+  IN_TRANSIT: 'IN_TRANSIT',
+  DELIVERED: 'DELIVERED',
+  CANCELLED: 'CANCELLED',
+} as const;
+
+const FulfilmentMilestoneType = {
+  CREATED: 'CREATED',
+  PICKUP_CONFIRMED: 'PICKUP_CONFIRMED',
+  PICKED_UP: 'PICKED_UP',
+  IN_TRANSIT: 'IN_TRANSIT',
+  ARRIVED_AT_HUB: 'ARRIVED_AT_HUB',
+  OUT_FOR_DELIVERY: 'OUT_FOR_DELIVERY',
+  DELIVERED: 'DELIVERED',
+  CANCELLED: 'CANCELLED',
+} as const;
+
 jest.mock('@prisma/client', () => ({
   DealDisputeStatus,
   DealDisputeSeverity,
@@ -107,6 +145,11 @@ jest.mock('@prisma/client', () => ({
   NegotiationActivityAudience,
   NegotiationActivityType,
   PremiumConversionEventType,
+  PremiumTier,
+  PremiumFeature,
+  PremiumSubscriptionStatus,
+  FulfilmentOrderStatus,
+  FulfilmentMilestoneType,
 }));
 
 describe('deal dispute end-to-end flow', () => {
@@ -289,6 +332,65 @@ describe('deal dispute end-to-end flow', () => {
         }),
       },
       dealDispute: {
+        findMany: jest.fn(async ({ where, include, orderBy, take }: any) => {
+          let records = Array.from(disputes.values());
+
+          if (where?.status?.in) {
+            records = records.filter((entry) => where.status.in.includes(entry.status));
+          }
+
+          if (orderBy && Array.isArray(orderBy)) {
+            for (const order of orderBy.reverse()) {
+              const [field, direction] = Object.entries(order)[0];
+              records.sort((a, b) => {
+                const left = (a as any)[field] ?? null;
+                const right = (b as any)[field] ?? null;
+                const multiplier = direction === 'desc' ? -1 : 1;
+                if (left == null && right == null) return 0;
+                if (left == null) return 1 * multiplier;
+                if (right == null) return -1 * multiplier;
+                return (left as Date).getTime() - (right as Date).getTime();
+              });
+            }
+          }
+
+          const limited = typeof take === 'number' ? records.slice(0, take) : records;
+
+          return limited.map((record) => {
+            const cloned = clone(record);
+            if (include?.negotiation) {
+              cloned.negotiation = buildNegotiationSnapshot();
+            }
+            if (include?.assignedTo) {
+              cloned.assignedTo = record.assignedToUserId
+                ? {
+                    id: record.assignedToUserId,
+                    name: record.assignedToUserId === 'admin-ops' ? 'Admin Ops' : 'Agent',
+                    email: `${record.assignedToUserId}@example.com`,
+                  }
+                : null;
+            }
+            if (include?.raisedBy) {
+              cloned.raisedBy = {
+                id: record.raisedByUserId,
+                name: record.raisedByUserId === 'buyer-1' ? 'Buyer One' : 'User',
+                role: 'USER',
+              };
+            }
+            if (include?.evidence) {
+              const evidence = (disputeEvidenceLog[record.id] ?? []).slice();
+              evidence.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+              cloned.evidence = evidence.slice(0, include.evidence.take ?? evidence.length);
+            }
+            if (include?.events) {
+              const events = (disputeEventsLog[record.id] ?? []).slice();
+              events.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+              cloned.events = events.slice(0, include.events.take ?? events.length);
+            }
+
+            return cloned;
+          });
+        }),
         findFirst: jest.fn(async ({ where }: any) => {
           for (const dispute of disputes.values()) {
             if (dispute.negotiationId === where.negotiationId && where.status?.in.includes(dispute.status)) {
@@ -529,6 +631,14 @@ describe('deal dispute end-to-end flow', () => {
     counterForm.set('note', 'Offer partial refund');
     const counterResult = await actions.recordDisputeCounterProposalAction(initialDisputeState, counterForm);
     expect(counterResult.status).toBe('success');
+
+    const { getDealDisputeQueue } = await import('@/lib/disputes/service');
+    const queue = await getDealDisputeQueue();
+    expect(queue).not.toHaveLength(0);
+    const queuedDispute = queue.find((entry) => entry.id === disputeId);
+    expect(queuedDispute?.guidance.recommendations.length).toBeGreaterThan(0);
+    expect(queuedDispute?.guidance.communications.some((template) => template.id === 'evidence-request')).toBe(true);
+    expect(queuedDispute?.analytics.openHours).toBeGreaterThanOrEqual(0);
 
     const payoutForm = new FormData();
     payoutForm.set('disputeId', disputeId);

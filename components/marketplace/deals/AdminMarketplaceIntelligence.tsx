@@ -29,7 +29,7 @@ function deltaTone(delta: number) {
 }
 
 export function AdminMarketplaceIntelligence({ overview }: AdminMarketplaceIntelligenceProps) {
-  const { summary, trendingMaterials, supplyGaps, premiumRecommendations, window } = overview;
+  const { summary, trendingMaterials, supplyGaps, premiumRecommendations, anomalyAlerts, window } = overview;
 
   return (
     <Card>
@@ -95,6 +95,7 @@ export function AdminMarketplaceIntelligence({ overview }: AdminMarketplaceIntel
                   <th className="px-4 py-2 font-medium">GMV</th>
                   <th className="px-4 py-2 font-medium">Ø Preis</th>
                   <th className="px-4 py-2 font-medium">Δ Nachfrage</th>
+                  <th className="px-4 py-2 font-medium">Forecast</th>
                 </tr>
               </thead>
               <tbody>
@@ -131,11 +132,50 @@ export function AdminMarketplaceIntelligence({ overview }: AdminMarketplaceIntel
                           ? `${material.demandGrowth > 0 ? '+' : ''}${material.demandGrowth.toLocaleString('de-DE')}`
                           : '±0'}
                       </td>
+                      <td className="px-4 py-2 text-xs">
+                        <div className="flex flex-col">
+                          <span className="font-medium">
+                            {material.forecast.projectedNegotiations.toLocaleString('de-DE')} N.
+                          </span>
+                          <span className="text-muted-foreground">
+                            {material.forecast.confidence} – {euroFormatter.format(material.forecast.projectedGmv)} GMV
+                          </span>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Anomalien & Forecast-Signale</h3>
+            <span className="text-xs text-muted-foreground">Berechnet aus 4× Zeitfenstern (wöchentlich gebucketed)</span>
+          </div>
+          <div className="mt-3 space-y-3">
+            {anomalyAlerts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Keine signifikanten Ausreißer in den aktuellen Zeitreihen.</p>
+            ) : (
+              anomalyAlerts.map((alert, index) => (
+                <div
+                  key={`${alert.materialId ?? alert.materialName}-${index}`}
+                  className={`rounded-lg border p-4 ${alert.severity === 'ALERT' ? 'border-destructive/60 bg-destructive/10' : 'border-amber-500/50 bg-amber-50'}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{alert.materialName}</p>
+                      <p className="text-xs text-muted-foreground">{alert.message}</p>
+                    </div>
+                    <Badge variant={alert.severity === 'ALERT' ? 'destructive' : 'outline'}>
+                      z={alert.zScore.toFixed(1)}
+                    </Badge>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </section>
 
@@ -179,11 +219,15 @@ export function AdminMarketplaceIntelligence({ overview }: AdminMarketplaceIntel
               <div key={`${recommendation.materialId ?? 'all'}-${index}`} className="rounded-lg border bg-primary/5 p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold">{recommendation.headline}</p>
-                  <Badge variant={recommendation.confidence === 'HIGH' ? 'default' : recommendation.confidence === 'MEDIUM' ? 'outline' : 'secondary'}>
-                    {recommendation.confidence}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">{recommendation.targetTier}</Badge>
+                    <Badge variant={recommendation.confidence === 'HIGH' ? 'default' : recommendation.confidence === 'MEDIUM' ? 'outline' : 'secondary'}>
+                      {recommendation.confidence}
+                    </Badge>
+                  </div>
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">{recommendation.description}</p>
+                <p className="mt-2 text-xs font-medium text-foreground">Aktion: {recommendation.action}</p>
               </div>
             ))}
           </div>

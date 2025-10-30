@@ -1,6 +1,7 @@
 /**
  * meta: module=premium-entitlements version=0.1 owner=platform
  */
+import { addDays } from 'date-fns';
 import {
   PremiumConversionEventType,
   PremiumFeature,
@@ -30,6 +31,23 @@ const DEFAULT_UPGRADE_PROMPT = {
   cta: 'Jetzt Premium testen',
 } as const;
 
+export type PremiumDunningState = 'NONE' | 'PAYMENT_FAILED' | 'PAST_DUE';
+
+export interface PremiumLifecycleSnapshot {
+  seatCapacity: number | null;
+  seatsInUse: number | null;
+  seatsAvailable: number | null;
+  isSeatCapacityExceeded: boolean;
+  gracePeriodEndsAt: Date | null;
+  isInGracePeriod: boolean;
+  dunningState: PremiumDunningState;
+  lastPaymentFailureAt: Date | null;
+  lastReminderSentAt: Date | null;
+  isDowngradeScheduled: boolean;
+  downgradeAt: Date | null;
+  downgradeTargetTier: PremiumTier | 'STANDARD' | null;
+}
+
 export interface PremiumProfile {
   tier: PremiumTier | 'STANDARD';
   status: PremiumSubscriptionStatus | 'NONE';
@@ -39,11 +57,164 @@ export interface PremiumProfile {
   hasAdvancedAnalytics: boolean;
   hasConciergeSla: boolean;
   hasDisputeFastTrack: boolean;
+  seatCapacity: number | null;
+  seatsInUse: number | null;
+  seatsAvailable: number | null;
+  isSeatCapacityExceeded: boolean;
+  gracePeriodEndsAt?: string | null;
+  isInGracePeriod: boolean;
+  isDowngradeScheduled: boolean;
+  downgradeAt?: string | null;
+  downgradeTargetTier: PremiumTier | 'STANDARD' | null;
+  dunningState: PremiumDunningState;
+  lastPaymentFailureAt?: string | null;
+  lastReminderSentAt?: string | null;
   upgradePrompt?: {
     headline: string;
     description: string;
     cta: string;
   } | null;
+  segment: 'STANDARD' | 'PREMIUM_CORE' | 'CONCIERGE';
+  recommendations: PremiumViewerRecommendation[];
+}
+
+export interface PremiumViewerRecommendation {
+  headline: string;
+  action: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  rationale?: string;
+  targetTier: 'PREMIUM_CORE' | 'CONCIERGE';
+}
+
+function extractLifecycleMetadata(metadata: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {};
+  }
+
+  const scoped = (metadata as Record<string, unknown>).premiumLifecycle;
+  if (!scoped || typeof scoped !== 'object' || Array.isArray(scoped)) {
+    return {};
+  }
+
+  return { ...(scoped as Record<string, unknown>) };
+}
+
+function parseIsoDate(value: unknown): Date | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export type PremiumLifecyclePatch = Partial<{
+  seatCapacity: number | null;
+  seatsInUse: number | null;
+  gracePeriodEndsAt: Date | string | null;
+  downgradeAt: Date | string | null;
+  downgradeTargetTier: PremiumTier | 'STANDARD' | null;
+  dunningState: PremiumDunningState | null;
+  lastPaymentFailureAt: Date | string | null;
+  lastReminderSentAt: Date | string | null;
+}>;
+
+function normaliseLifecyclePatch(patch: PremiumLifecyclePatch): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+
+  if ('seatCapacity' in patch) {
+    output.seatCapacity = patch.seatCapacity ?? null;
+  }
+
+  if ('seatsInUse' in patch) {
+    output.seatsInUse = patch.seatsInUse ?? null;
+  }
+
+  if ('gracePeriodEndsAt' in patch) {
+    const value = patch.gracePeriodEndsAt;
+    output.gracePeriodEndsAt = value instanceof Date ? value.toISOString() : value ?? null;
+  }
+
+  if ('downgradeAt' in patch) {
+    const value = patch.downgradeAt;
+    output.downgradeAt = value instanceof Date ? value.toISOString() : value ?? null;
+  }
+
+  if ('downgradeTargetTier' in patch) {
+    output.downgradeTargetTier = patch.downgradeTargetTier ?? null;
+  }
+
+  if ('dunningState' in patch) {
+    output.dunningState = patch.dunningState ?? 'NONE';
+  }
+
+  if ('lastPaymentFailureAt' in patch) {
+    const value = patch.lastPaymentFailureAt;
+    output.lastPaymentFailureAt = value instanceof Date ? value.toISOString() : value ?? null;
+  }
+
+  if ('lastReminderSentAt' in patch) {
+    const value = patch.lastReminderSentAt;
+    output.lastReminderSentAt = value instanceof Date ? value.toISOString() : value ?? null;
+  }
+
+  return output;
+}
+
+export function applyPremiumLifecyclePatch(
+  metadata: Prisma.JsonValue | null | undefined,
+  patch: PremiumLifecyclePatch
+): Prisma.JsonValue {
+  const current = extractLifecycleMetadata(metadata);
+  const normalised = normaliseLifecyclePatch(patch);
+  const scoped = { ...current, ...normalised };
+  return mergeMetadata(metadata, { premiumLifecycle: scoped });
+}
+
+export function resolvePremiumLifecycleState(
+  subscription: Pick<PremiumSubscriptionModel, 'metadata'>,
+  referenceDate: Date = new Date()
+): PremiumLifecycleSnapshot {
+  const lifecycle = extractLifecycleMetadata(subscription.metadata);
+  const seatCapacity = typeof lifecycle.seatCapacity === 'number' ? lifecycle.seatCapacity : null;
+  const seatsInUse = typeof lifecycle.seatsInUse === 'number' ? lifecycle.seatsInUse : null;
+  const gracePeriodEndsAt = parseIsoDate(lifecycle.gracePeriodEndsAt);
+  const downgradeAt = parseIsoDate(lifecycle.downgradeAt);
+  const downgradeTargetRaw = lifecycle.downgradeTargetTier;
+  const downgradeTargetTier =
+    typeof downgradeTargetRaw === 'string' &&
+    (downgradeTargetRaw === 'STANDARD' || Object.values(PremiumTier).includes(downgradeTargetRaw as PremiumTier))
+      ? (downgradeTargetRaw as PremiumTier | 'STANDARD')
+      : null;
+  const dunningState: PremiumDunningState =
+    lifecycle.dunningState === 'PAYMENT_FAILED'
+      ? 'PAYMENT_FAILED'
+      : lifecycle.dunningState === 'PAST_DUE'
+      ? 'PAST_DUE'
+      : 'NONE';
+  const lastPaymentFailureAt = parseIsoDate(lifecycle.lastPaymentFailureAt);
+  const lastReminderSentAt = parseIsoDate(lifecycle.lastReminderSentAt);
+  const seatsAvailable =
+    seatCapacity != null && seatsInUse != null ? Math.max(seatCapacity - seatsInUse, 0) : seatCapacity ?? null;
+  const isSeatCapacityExceeded = seatCapacity != null && seatsInUse != null && seatsInUse > seatCapacity;
+  const isInGracePeriod =
+    !!gracePeriodEndsAt && gracePeriodEndsAt.getTime() > referenceDate.getTime() && dunningState === 'PAYMENT_FAILED';
+  const isDowngradeScheduled = !!downgradeAt && downgradeAt.getTime() > referenceDate.getTime();
+
+  return {
+    seatCapacity,
+    seatsInUse,
+    seatsAvailable,
+    isSeatCapacityExceeded,
+    gracePeriodEndsAt,
+    isInGracePeriod,
+    dunningState,
+    lastPaymentFailureAt,
+    lastReminderSentAt,
+    isDowngradeScheduled,
+    downgradeAt,
+    downgradeTargetTier,
+  };
 }
 
 function normaliseEntitlements(
@@ -58,7 +229,45 @@ function normaliseEntitlements(
   return Array.from(merged);
 }
 
-function buildUpgradePrompt(status: PremiumSubscriptionStatus): PremiumProfile['upgradePrompt'] {
+function buildUpgradePrompt(
+  status: PremiumSubscriptionStatus,
+  lifecycle: PremiumLifecycleSnapshot,
+  { entitlementsActive }: { entitlementsActive: boolean }
+): PremiumProfile['upgradePrompt'] {
+  if (lifecycle.dunningState === 'PAYMENT_FAILED') {
+    const remaining = lifecycle.gracePeriodEndsAt
+      ? Math.max(Math.ceil((lifecycle.gracePeriodEndsAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)), 0)
+      : null;
+    return {
+      headline: 'Zahlung fehlgeschlagen – Grace Period aktiv',
+      description:
+        remaining != null
+          ? `Bitte Zahlung aktualisieren, damit Premium-Insights nicht in ${remaining} Tag(en) deaktiviert werden.`
+          : 'Bitte aktualisieren Sie die Zahlungsmethode, um Premium-Insights weiter zu nutzen.',
+      cta: 'Zahlungsdaten aktualisieren',
+    };
+  }
+
+  if (lifecycle.isSeatCapacityExceeded) {
+    return {
+      headline: 'Premium-Sitzplätze erschöpft',
+      description: 'Weisen Sie Sitzplätze neu zu oder erhöhen Sie das Kontingent, um Premium-Funktionen freizuschalten.',
+      cta: 'Sitzplätze verwalten',
+    };
+  }
+
+  if (lifecycle.isDowngradeScheduled && lifecycle.downgradeAt) {
+    return {
+      headline: 'Downgrade geplant',
+      description: `Downgrade am ${lifecycle.downgradeAt.toLocaleDateString('de-DE')} – sichern Sie sich Premium-Funktionen dauerhaft.`,
+      cta: 'Downgrade verhindern',
+    };
+  }
+
+  if (entitlementsActive) {
+    return null;
+  }
+
   switch (status) {
     case PremiumSubscriptionStatus.CANCELED:
       return {
@@ -81,6 +290,53 @@ function buildUpgradePrompt(status: PremiumSubscriptionStatus): PremiumProfile['
     default:
       return { ...DEFAULT_UPGRADE_PROMPT };
   }
+}
+
+function buildViewerRecommendations(
+  segment: PremiumProfile['segment'],
+  lifecycle: PremiumLifecycleSnapshot,
+): PremiumViewerRecommendation[] {
+  const recommendations: PremiumViewerRecommendation[] = [];
+
+  if (lifecycle.dunningState === 'PAYMENT_FAILED') {
+    recommendations.push({
+      headline: 'Zahlung reaktivieren',
+      action: 'Billing-Kontakt informieren und Stripe-Link teilen',
+      confidence: 'HIGH',
+      rationale: 'Grace Period aktiv – Entitlements werden sonst pausiert.',
+      targetTier: segment === 'CONCIERGE' ? 'CONCIERGE' : 'PREMIUM_CORE',
+    });
+  }
+
+  if (lifecycle.isSeatCapacityExceeded) {
+    recommendations.push({
+      headline: 'Sitzplätze freigeben',
+      action: 'Inaktive Nutzer:innen entfernen oder Paket aufstocken',
+      confidence: 'MEDIUM',
+      rationale: 'Überbuchung blockiert neue Premium-Workspaces.',
+      targetTier: 'PREMIUM_CORE',
+    });
+  }
+
+  if (segment === 'CONCIERGE') {
+    recommendations.push({
+      headline: 'Concierge Sprint vorbereiten',
+      action: 'Priorisierte Deals markieren und SLA-Warnungen aktivieren',
+      confidence: 'HIGH',
+      rationale: 'Concierge-SLA aktiv – Forecasts zeigen Chancen zur Beschleunigung.',
+      targetTier: 'CONCIERGE',
+    });
+  } else if (segment === 'PREMIUM_CORE') {
+    recommendations.push({
+      headline: 'Predictive Alerts nutzen',
+      action: 'Forecasting-Insights aus dem Intelligence Hub abonnieren',
+      confidence: 'MEDIUM',
+      rationale: 'Neue Zeitreihenprognosen verfügbar – upsell-ready.',
+      targetTier: 'PREMIUM_CORE',
+    });
+  }
+
+  return recommendations;
 }
 
 function mapStripeSubscriptionStatus(status: Stripe.Subscription.Status | null | undefined) {
@@ -223,24 +479,62 @@ export async function getPremiumProfileForUser(
       hasAdvancedAnalytics: false,
       hasConciergeSla: false,
       hasDisputeFastTrack: false,
+      seatCapacity: null,
+      seatsInUse: null,
+      seatsAvailable: null,
+      isSeatCapacityExceeded: false,
+      gracePeriodEndsAt: null,
+      isInGracePeriod: false,
+      isDowngradeScheduled: false,
+      downgradeAt: null,
+      downgradeTargetTier: 'STANDARD',
+      dunningState: 'NONE',
+      lastPaymentFailureAt: null,
+      lastReminderSentAt: null,
       upgradePrompt: { ...DEFAULT_UPGRADE_PROMPT },
+      segment: 'STANDARD',
+      recommendations: [],
     };
   }
 
   const activeStatuses = [PremiumSubscriptionStatus.ACTIVE, PremiumSubscriptionStatus.TRIALING];
-  const isActive = activeStatuses.includes(subscription.status);
-  const entitlements = isActive ? normaliseEntitlements(subscription.tier, subscription.entitlements) : [];
-  const prompt = isActive ? null : buildUpgradePrompt(subscription.status);
+  const lifecycle = resolvePremiumLifecycleState(subscription);
+  const statusActive = activeStatuses.includes(subscription.status) || lifecycle.isInGracePeriod;
+  const entitlementsActive = statusActive && !lifecycle.isSeatCapacityExceeded;
+  const entitlements = entitlementsActive ? normaliseEntitlements(subscription.tier, subscription.entitlements) : [];
+  const prompt = buildUpgradePrompt(subscription.status, lifecycle, { entitlementsActive });
+  const segment = lifecycle.isSeatCapacityExceeded
+    ? 'PREMIUM_CORE'
+    : entitlementsActive && entitlements.includes(PremiumFeature.CONCIERGE_SLA)
+    ? 'CONCIERGE'
+    : entitlementsActive && entitlements.includes(PremiumFeature.ADVANCED_ANALYTICS)
+    ? 'PREMIUM_CORE'
+    : 'STANDARD';
+  const recommendations = buildViewerRecommendations(segment, lifecycle);
   const profile: PremiumProfile = {
     tier: subscription.tier,
     status: subscription.status,
     entitlements,
     currentPeriodEndsAt: subscription.currentPeriodEndsAt?.toISOString() ?? null,
     isTrialing: subscription.status === PremiumSubscriptionStatus.TRIALING,
-    hasAdvancedAnalytics: isActive && entitlements.includes(PremiumFeature.ADVANCED_ANALYTICS),
-    hasConciergeSla: isActive && entitlements.includes(PremiumFeature.CONCIERGE_SLA),
-    hasDisputeFastTrack: isActive && entitlements.includes(PremiumFeature.DISPUTE_FAST_TRACK),
+    hasAdvancedAnalytics: entitlementsActive && entitlements.includes(PremiumFeature.ADVANCED_ANALYTICS),
+    hasConciergeSla: entitlementsActive && entitlements.includes(PremiumFeature.CONCIERGE_SLA),
+    hasDisputeFastTrack: entitlementsActive && entitlements.includes(PremiumFeature.DISPUTE_FAST_TRACK),
+    seatCapacity: lifecycle.seatCapacity,
+    seatsInUse: lifecycle.seatsInUse,
+    seatsAvailable: lifecycle.seatsAvailable,
+    isSeatCapacityExceeded: lifecycle.isSeatCapacityExceeded,
+    gracePeriodEndsAt: lifecycle.gracePeriodEndsAt?.toISOString() ?? null,
+    isInGracePeriod: lifecycle.isInGracePeriod,
+    isDowngradeScheduled: lifecycle.isDowngradeScheduled,
+    downgradeAt: lifecycle.downgradeAt?.toISOString() ?? null,
+    downgradeTargetTier: lifecycle.downgradeTargetTier,
+    dunningState: lifecycle.dunningState,
+    lastPaymentFailureAt: lifecycle.lastPaymentFailureAt?.toISOString() ?? null,
+    lastReminderSentAt: lifecycle.lastReminderSentAt?.toISOString() ?? null,
     upgradePrompt: prompt,
+    segment,
+    recommendations,
   };
 
   return profile;
@@ -284,6 +578,7 @@ export interface SubscriptionUpsertInput {
     checkoutSessionId?: string | null;
     latestInvoiceId?: string | null;
   };
+  lifecycle?: PremiumLifecyclePatch;
 }
 
 function buildBillingAssignments(
@@ -320,6 +615,7 @@ export async function upsertPremiumSubscription({
   status = PremiumSubscriptionStatus.ACTIVE,
   source,
   billing,
+  lifecycle,
 }: SubscriptionUpsertInput): Promise<PremiumProfile> {
   const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.premiumSubscription.findFirst({
@@ -330,6 +626,14 @@ export async function upsertPremiumSubscription({
     let subscription: PremiumSubscriptionModel;
     const defaultPeriodEnd = existing?.currentPeriodEndsAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     if (existing) {
+      let metadata = existing.metadata;
+      if (source) {
+        metadata = mergeMetadata(metadata, { source });
+      }
+      if (lifecycle) {
+        metadata = applyPremiumLifecyclePatch(metadata, lifecycle);
+      }
+
       subscription = await tx.premiumSubscription.update({
         where: { id: existing.id },
         data: {
@@ -338,19 +642,27 @@ export async function upsertPremiumSubscription({
           currentPeriodEndsAt:
             status === PremiumSubscriptionStatus.CANCELED ? existing.currentPeriodEndsAt ?? defaultPeriodEnd : defaultPeriodEnd,
           cancellationRequestedAt: status === PremiumSubscriptionStatus.CANCELED ? new Date() : existing.cancellationRequestedAt,
-          metadata: source ? { ...(existing.metadata as Record<string, unknown> | null ?? {}), source } : existing.metadata,
+          metadata,
           ...buildBillingAssignments(billing),
         },
         include: { entitlements: true },
       });
     } else {
+      let metadata: Prisma.JsonValue | undefined;
+      if (source) {
+        metadata = mergeMetadata(null, { source });
+      }
+      if (lifecycle) {
+        metadata = applyPremiumLifecyclePatch(metadata ?? null, lifecycle);
+      }
+
       subscription = await tx.premiumSubscription.create({
         data: {
           userId,
           tier,
           status,
           currentPeriodEndsAt: defaultPeriodEnd,
-          metadata: source ? { source } : undefined,
+          metadata,
           ...buildBillingAssignments(billing),
         },
         include: { entitlements: true },
@@ -533,6 +845,7 @@ async function handleStripeInvoiceEvent(event: Stripe.Event, invoice: Stripe.Inv
       : invoice.status === 'uncollectible' || invoice.status === 'void'
       ? PremiumSubscriptionStatus.EXPIRED
       : null;
+  const failureTimestamp = resolveStripeTimestamp(event.created) ?? new Date();
 
   await prisma.$transaction(async (tx) => {
     const located = await locateSubscription(tx, {
@@ -546,16 +859,42 @@ async function handleStripeInvoiceEvent(event: Stripe.Event, invoice: Stripe.Inv
       | null = null;
 
     if (located) {
-      const metadataPatch = mergeMetadata(located.metadata, {
+      const lifecycleSnapshot = resolvePremiumLifecycleState(located);
+      let metadataPatch = mergeMetadata(located.metadata, {
         stripeInvoiceStatus: invoice.status,
       });
+
+      if (event.type === 'invoice.payment_failed') {
+        const graceEndsAt =
+          lifecycleSnapshot.gracePeriodEndsAt && lifecycleSnapshot.gracePeriodEndsAt.getTime() > failureTimestamp.getTime()
+            ? lifecycleSnapshot.gracePeriodEndsAt
+            : addDays(failureTimestamp, 7);
+        metadataPatch = applyPremiumLifecyclePatch(metadataPatch, {
+          dunningState: 'PAYMENT_FAILED',
+          lastPaymentFailureAt: failureTimestamp,
+          gracePeriodEndsAt: graceEndsAt,
+          lastReminderSentAt: null,
+        });
+      } else if (invoice.status === 'paid') {
+        metadataPatch = applyPremiumLifecyclePatch(metadataPatch, {
+          dunningState: 'NONE',
+          gracePeriodEndsAt: null,
+          lastPaymentFailureAt: null,
+        });
+      } else if (invoice.status === 'open' && lifecycleSnapshot.dunningState === 'PAYMENT_FAILED') {
+        metadataPatch = applyPremiumLifecyclePatch(metadataPatch, {
+          dunningState: 'PAST_DUE',
+        });
+      }
 
       const updateData: Prisma.PremiumSubscriptionUpdateInput = {
         latestInvoiceId: invoice.id,
         metadata: metadataPatch,
       };
 
-      if (statusFromInvoice) {
+      if (event.type === 'invoice.payment_failed') {
+        updateData.status = PremiumSubscriptionStatus.EXPIRED;
+      } else if (statusFromInvoice) {
         updateData.status = statusFromInvoice;
       }
 

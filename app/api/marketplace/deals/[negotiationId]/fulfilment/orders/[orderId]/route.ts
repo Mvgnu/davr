@@ -64,6 +64,7 @@ export async function PATCH(
     const updated = await updateFulfilmentOrder({
       orderId: params.orderId,
       status: validation.data.status,
+      carrierCode: validation.data.carrierCode,
       pickupWindowStart: validation.data.pickupWindowStart,
       pickupWindowEnd: validation.data.pickupWindowEnd,
       pickupLocation: validation.data.pickupLocation,

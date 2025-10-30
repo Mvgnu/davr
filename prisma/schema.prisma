@@ -488,6 +488,9 @@ model FulfilmentOrder {
   negotiationId       String
   reference           String?                @unique
   status              FulfilmentOrderStatus  @default(DRAFT)
+  carrierCode         String?
+  carrierSyncStatus   FulfilmentCarrierSyncStatus?
+  lastCarrierSyncAt   DateTime?
   pickupWindowStart   DateTime?
   pickupWindowEnd     DateTime?
   pickupLocation      String?
@@ -507,11 +510,13 @@ model FulfilmentOrder {
   updatedBy           User?                  @relation("FulfilmentOrderUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   milestones          FulfilmentMilestone[]
   reminders           FulfilmentReminder[]
+  carrierManifest     FulfilmentCarrierManifest?
 
   @@index([negotiationId])
   @@index([status])
   @@index([pickupWindowStart, pickupWindowEnd])
   @@index([carrierName])
+  @@index([carrierCode])
 }
 
 model FulfilmentMilestone {
@@ -544,6 +549,39 @@ model FulfilmentReminder {
   @@index([orderId])
   @@index([type, scheduledFor])
   @@index([sentAt])
+}
+
+model FulfilmentCarrierManifest {
+  id                String                       @id @default(cuid())
+  orderId           String                       @unique
+  carrierCode       String
+  trackingReference String?
+  pollingStatus     FulfilmentCarrierSyncStatus  @default(REGISTERED)
+  manifestPayload   Json?
+  lastSyncedAt      DateTime?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+  order             FulfilmentOrder              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  trackingEvents    FulfilmentTrackingEvent[]
+
+  @@index([carrierCode])
+  @@index([pollingStatus])
+}
+
+model FulfilmentTrackingEvent {
+  id           String                  @id @default(cuid())
+  manifestId   String
+  status       String
+  description  String?
+  eventTime    DateTime
+  location     String?
+  rawPayload   Json?
+  createdAt    DateTime               @default(now())
+  manifest     FulfilmentCarrierManifest @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+
+  @@index([manifestId])
+  @@index([eventTime])
+  @@index([status])
 }
 
 model DealContract {
@@ -886,6 +924,13 @@ enum FulfilmentReminderType {
   PICKUP_WINDOW
   DELIVERY_WINDOW
   SLA_BREACH
+}
+
+enum FulfilmentCarrierSyncStatus {
+  REGISTERED
+  IN_TRANSIT
+  DELIVERED
+  FAILED
 }
 
 enum DealDisputeStatus {
