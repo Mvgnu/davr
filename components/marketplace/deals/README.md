@@ -15,8 +15,12 @@ pages.
   preview links with retry messaging.
 - `NegotiationPremiumInsights`: gated analytics card that surfaces offer iteration counts, time-in-stage, and SLA plan details
   when the viewer's premium entitlements expose `hasAdvancedAnalytics`.
+- `NegotiationDisputePanel`: renders active dispute summaries, SLA countdowns, evidence links, and exposes a modal for buyers
+  or sellers to submit new disputes including optional attachments.
 - `AdminPremiumUpgradeFlow`: admin-only workflow that triggers premium subscription API actions (trial start, concierge
   activation) and surfaces status messaging while logging conversion events.
+- `AdminMarketplaceIntelligence`: renders aggregated negotiation analytics, trending material indicators, supply gaps, and
+  premium recommendations for operations leads, allowing time-window and segment toggles from the admin console.
 - `SchedulerJobTriggerButton`: inline manual scheduler trigger that posts to the server action, refreshes the dashboard on
   success, and displays per-job feedback without query-string redirects.
 

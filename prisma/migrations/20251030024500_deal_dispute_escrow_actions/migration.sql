@@ -1,0 +1,20 @@
+-- Integrate dispute milestones with escrow adjustments and SLA tracking
+-- adds new columns for hold, counter proposal, payout totals and sla breach markers
+ALTER TABLE "DealDispute"
+  ADD COLUMN "slaBreachedAt" TIMESTAMP(3),
+  ADD COLUMN "holdAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN "counterProposalAmount" DOUBLE PRECISION,
+  ADD COLUMN "resolutionPayoutAmount" DOUBLE PRECISION;
+
+ALTER TYPE "EscrowTransactionType" ADD VALUE IF NOT EXISTS 'DISPUTE_HOLD';
+ALTER TYPE "EscrowTransactionType" ADD VALUE IF NOT EXISTS 'DISPUTE_RELEASE';
+ALTER TYPE "EscrowTransactionType" ADD VALUE IF NOT EXISTS 'DISPUTE_PAYOUT';
+
+ALTER TYPE "DealDisputeEventType" ADD VALUE IF NOT EXISTS 'ESCROW_HOLD_APPLIED';
+ALTER TYPE "DealDisputeEventType" ADD VALUE IF NOT EXISTS 'ESCROW_COUNTER_PROPOSED';
+ALTER TYPE "DealDisputeEventType" ADD VALUE IF NOT EXISTS 'ESCROW_PAYOUT_RELEASED';
+
+ALTER TYPE "NegotiationActivityType" ADD VALUE IF NOT EXISTS 'ESCROW_DISPUTE_HOLD_APPLIED';
+ALTER TYPE "NegotiationActivityType" ADD VALUE IF NOT EXISTS 'ESCROW_DISPUTE_COUNTER_PROPOSED';
+ALTER TYPE "NegotiationActivityType" ADD VALUE IF NOT EXISTS 'ESCROW_DISPUTE_PAYOUT_EXECUTED';
+ALTER TYPE "NegotiationActivityType" ADD VALUE IF NOT EXISTS 'ESCROW_DISPUTE_SLA_BREACHED';

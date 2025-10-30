@@ -1,6 +1,8 @@
-# Contract Analytics
+# Contract Collaboration & Analytics
 
 - status: active
 - owner: platform
-- description: Minimal contract intent analytics helpers that persist envelope lifecycle and participant signature events for reporting.
-- notes: Records events in `ContractIntentMetric` via Prisma; designed for reuse by webhook handlers and background jobs.
+- description: Collaboration helpers that record contract revision history, inline comments, and analytics metrics for envelope lifecycle tracking.
+- notes:
+  - Records events in `ContractIntentMetric` via Prisma; designed for reuse by webhook handlers and background jobs.
+  - `revisions.ts` exposes helpers to create revisions, update statuses, and sync comments with negotiation events.

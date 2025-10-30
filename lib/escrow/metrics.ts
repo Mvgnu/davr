@@ -1,24 +1,12 @@
 import { differenceInMinutes } from 'date-fns';
-import {
-  EscrowStatus,
-  EscrowTransactionType,
-  type NegotiationStatus,
-  type Prisma,
-} from '@prisma/client';
+import { EscrowStatus, EscrowTransactionType, type Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/db/prisma';
+import { getDealDisputeQueue, type DealDisputeQueueItem } from '@/lib/disputes/service';
 
 const OVERDUE_THRESHOLD_HOURS = 24;
 
-export interface DisputeQueueItem {
-  negotiationId: string;
-  negotiationStatus: NegotiationStatus;
-  escrowStatus: EscrowStatus;
-  providerReference: string | null;
-  disputedSince: Date;
-  outstandingAmount: number;
-  lastEventLabel: string;
-}
+export type DisputeQueueItem = DealDisputeQueueItem;
 
 export interface ReconciliationAlertItem {
   negotiationId: string;
@@ -43,53 +31,11 @@ export interface EscrowFundingLatencyMetrics {
 }
 
 /**
- * meta: module=escrow-metrics owner=platform scope=operations version=0.1
- * Aggregates dispute, reconciliation, and funding latency insights for the
- * admin operations console.
+ * meta: module=escrow-metrics owner=platform scope=operations version=0.2
+ * Aggregates reconciliation and funding latency insights for the admin
+ * operations console and proxies the dedicated dispute queue helper.
  */
-export async function getEscrowDisputeQueue(limit = 20): Promise<DisputeQueueItem[]> {
-  const accounts = await prisma.escrowAccount.findMany({
-    where: { status: EscrowStatus.DISPUTED },
-    include: {
-      negotiation: { select: { id: true, status: true } },
-      transactions: {
-        where: {
-          type: EscrowTransactionType.ADJUSTMENT,
-          metadata: {
-            path: ['dispute', 'state'],
-            equals: 'OPEN',
-          },
-        },
-        orderBy: { occurredAt: 'desc' },
-        take: 1,
-      },
-    },
-    orderBy: { updatedAt: 'desc' },
-    take: limit,
-  });
-
-  return accounts
-    .filter((account) => account.negotiation)
-    .map((account) => {
-      const openDispute = account.transactions[0];
-      const outstandingAmount =
-        account.fundedAmount - account.releasedAmount - account.refundedAmount;
-
-      return {
-        negotiationId: account.negotiation!.id,
-        negotiationStatus: account.negotiation!.status,
-        escrowStatus: account.status,
-        providerReference: account.providerReference,
-        disputedSince: openDispute?.occurredAt ?? account.updatedAt,
-        outstandingAmount: Number(outstandingAmount.toFixed(2)),
-        lastEventLabel:
-          (openDispute?.metadata as Prisma.JsonObject | null | undefined)?.providerEvent ===
-          'dispute_opened'
-            ? 'Dispute eröffnet'
-            : 'Dispute offen',
-      };
-    });
-}
+export const getEscrowDisputeQueue = getDealDisputeQueue;
 
 export async function getEscrowReconciliationAlerts(
   limit = 20

@@ -39,6 +39,7 @@ export async function GET(
 
     const negotiationPayload = {
       ...result.negotiation,
+      contractRevisions: result.negotiation.contractRevisions ?? [],
       premiumTier: negotiationPremiumTier,
       premium: {
         viewer: viewerPremium,

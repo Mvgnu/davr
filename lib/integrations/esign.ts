@@ -14,6 +14,7 @@ import {
   recordEnvelopeLifecycleEvent,
   recordParticipantSignatureEvent,
 } from '@/lib/contracts/analytics';
+import { getCurrentContractRevision } from '@/lib/contracts/revisions';
 
 export interface ContractParticipant {
   id: string;
@@ -71,6 +72,17 @@ class MockESignProvider implements ESignProvider {
     const envelopeId = randomUUID();
     const documentId = randomUUID();
 
+    const activeRevision = await getCurrentContractRevision(input.contractId);
+    const attachmentsRaw = activeRevision?.attachments as unknown;
+    const attachments = Array.isArray(attachmentsRaw)
+      ? (attachmentsRaw.filter(
+          (item): item is { url?: string | null; mimeType?: string | null } =>
+            Boolean(item) && typeof item === 'object' && 'url' in (item as Record<string, unknown>)
+        ) as { url?: string | null; mimeType?: string | null }[])
+      : [];
+    const preferredAttachment = attachments.find((item) => item.mimeType?.includes('pdf')) ?? attachments[0];
+    const revisionBody = activeRevision?.body ?? input.draftTerms ?? null;
+
     const participantStates = Object.fromEntries(
       input.participants.map((participant) => [participant.role, { status: 'PENDING', signedAt: null }])
     );
@@ -86,13 +98,18 @@ class MockESignProvider implements ESignProvider {
         participantStates,
         lastProviderSyncAt: new Date(),
         lastError: null,
+        draftTerms: revisionBody ?? undefined,
+        documentUrl: preferredAttachment?.url ?? null,
         documents: {
           create: {
             provider: this.providerId,
             providerDocumentId: documentId,
             providerEnvelopeId: envelopeId,
             status: ContractEnvelopeStatus.ISSUED,
-            metadata: input.draftTerms ? { draftTerms: input.draftTerms } : undefined,
+            metadata: {
+              draftTerms: revisionBody,
+              revisionId: activeRevision?.id ?? null,
+            },
             issuedAt: new Date(),
           },
         },

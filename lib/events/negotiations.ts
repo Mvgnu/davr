@@ -27,10 +27,19 @@ export type NegotiationEventType =
   | 'ESCROW_DISPUTE_OPENED'
   | 'ESCROW_DISPUTE_RESOLVED'
   | 'ESCROW_STATEMENT_READY'
+  | 'DEAL_DISPUTE_RAISED'
+  | 'DEAL_DISPUTE_ESCROW_HOLD'
+  | 'DEAL_DISPUTE_ESCROW_COUNTER'
+  | 'DEAL_DISPUTE_ESCROW_PAYOUT'
+  | 'DEAL_DISPUTE_SLA_BREACHED'
   | 'NEGOTIATION_SLA_WARNING'
   | 'NEGOTIATION_SLA_BREACHED'
   | 'CONTRACT_SIGNATURE_REQUESTED'
-  | 'CONTRACT_SIGNATURE_COMPLETED';
+  | 'CONTRACT_SIGNATURE_COMPLETED'
+  | 'CONTRACT_REVISION_SUBMITTED'
+  | 'CONTRACT_REVISION_ACCEPTED'
+  | 'CONTRACT_REVISION_REJECTED'
+  | 'CONTRACT_REVISION_COMMENTED';
 
 export interface NegotiationDomainEvent {
   type: NegotiationEventType;
@@ -119,6 +128,13 @@ function resolveEventContext(
         label: 'Treuhandkonto im Disput',
         description: 'Provider meldet einen Streitfall für dieses Escrow-Konto.',
       };
+    case 'DEAL_DISPUTE_RAISED':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_OPENED,
+        label: 'Neuer Deal-Disput gemeldet',
+        description: 'Teilnehmende Partei hat einen neuen Disput eröffnet.',
+      };
     case 'ESCROW_DISPUTE_RESOLVED':
       return {
         audience: NegotiationActivityAudience.ADMIN,
@@ -132,6 +148,34 @@ function resolveEventContext(
         activityType: NegotiationActivityType.ESCROW_STATEMENT_READY,
         label: 'Provider-Kontoauszug verfügbar',
         description: 'Neuer Escrow-Statement eingetroffen – Reconciliation benötigt.',
+      };
+    case 'DEAL_DISPUTE_ESCROW_HOLD':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_HOLD_APPLIED,
+        label: 'Teilbetrag blockiert',
+        description: 'Treuhandmittel wurden aufgrund eines Disputs reserviert.',
+      };
+    case 'DEAL_DISPUTE_ESCROW_COUNTER':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_COUNTER_PROPOSED,
+        label: 'Vergleichsvorschlag hinterlegt',
+        description: 'Operations-Team hat einen Ausgleichsvorschlag dokumentiert.',
+      };
+    case 'DEAL_DISPUTE_ESCROW_PAYOUT':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_PAYOUT_EXECUTED,
+        label: 'Auszahlung aus Disput',
+        description: 'Treuhandmittel wurden im Rahmen des Disputs ausgezahlt.',
+      };
+    case 'DEAL_DISPUTE_SLA_BREACHED':
+      return {
+        audience: NegotiationActivityAudience.ADMIN,
+        activityType: NegotiationActivityType.ESCROW_DISPUTE_SLA_BREACHED,
+        label: 'Disput SLA verletzt',
+        description: 'SLA-Fälligkeit des Disputs wurde überschritten.',
       };
     case 'NEGOTIATION_SLA_WARNING':
       return {
@@ -160,6 +204,34 @@ function resolveEventContext(
         activityType: NegotiationActivityType.CONTRACT_SIGNATURE_COMPLETED,
         label: 'Signatur abgeschlossen',
         description: 'Alle Vertragsunterschriften liegen vor.',
+      };
+    case 'CONTRACT_REVISION_SUBMITTED':
+      return {
+        audience: NegotiationActivityAudience.PARTICIPANTS,
+        activityType: NegotiationActivityType.CONTRACT_REVISION_SUBMITTED,
+        label: 'Neue Vertragsrevision eingereicht',
+        description: 'Eine Partei hat eine aktualisierte Vertragsfassung zur Prüfung eingereicht.',
+      };
+    case 'CONTRACT_REVISION_ACCEPTED':
+      return {
+        audience: NegotiationActivityAudience.ALL,
+        activityType: NegotiationActivityType.CONTRACT_REVISION_ACCEPTED,
+        label: 'Vertragsrevision akzeptiert',
+        description: 'Die neueste Vertragsfassung wurde angenommen und ist jetzt gültig.',
+      };
+    case 'CONTRACT_REVISION_REJECTED':
+      return {
+        audience: NegotiationActivityAudience.PARTICIPANTS,
+        activityType: NegotiationActivityType.CONTRACT_REVISION_REJECTED,
+        label: 'Vertragsrevision abgelehnt',
+        description: 'Die eingereichte Vertragsfassung erfordert weitere Überarbeitung.',
+      };
+    case 'CONTRACT_REVISION_COMMENTED':
+      return {
+        audience: NegotiationActivityAudience.PARTICIPANTS,
+        activityType: NegotiationActivityType.CONTRACT_REVISION_COMMENTED,
+        label: 'Kommentar zur Vertragsrevision',
+        description: 'Ein Diskussionseintrag wurde zu einer Vertragsstelle hinzugefügt.',
       };
     default:
       return {

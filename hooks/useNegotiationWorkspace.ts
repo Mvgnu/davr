@@ -285,6 +285,15 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
               : current.contract,
           }),
         }),
+      raiseDispute: (body: Record<string, unknown>) => runAction(`${basePath}/disputes`, { body }),
+      createFulfilmentOrder: (body: Record<string, unknown>) =>
+        runAction(`${basePath}/fulfilment/orders`, { body }),
+      updateFulfilmentOrder: (orderId: string, body: Record<string, unknown>) =>
+        runAction(`${basePath}/fulfilment/orders/${orderId}`, { body }),
+      recordFulfilmentMilestone: (orderId: string, body: Record<string, unknown>) =>
+        runAction(`${basePath}/fulfilment/orders/${orderId}/milestones`, { body }),
+      scheduleFulfilmentReminder: (orderId: string, body: Record<string, unknown>) =>
+        runAction(`${basePath}/fulfilment/orders/${orderId}/reminders`, { body }),
     };
   }, [negotiationId, runAction]);
 
