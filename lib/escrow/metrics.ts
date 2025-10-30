@@ -2,7 +2,12 @@ import { differenceInMinutes } from 'date-fns';
 import { EscrowStatus, EscrowTransactionType, type Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/db/prisma';
-import { getDealDisputeQueue, type DealDisputeQueueItem } from '@/lib/disputes/service';
+import {
+  getDealDisputeQueue,
+  getDealDisputeAnalyticsSnapshot,
+  type DealDisputeQueueItem,
+  type DealDisputeAnalyticsSnapshot,
+} from '@/lib/disputes/service';
 
 const OVERDUE_THRESHOLD_HOURS = 24;
 
@@ -36,6 +41,8 @@ export interface EscrowFundingLatencyMetrics {
  * operations console and proxies the dedicated dispute queue helper.
  */
 export const getEscrowDisputeQueue = getDealDisputeQueue;
+export const getEscrowDisputeAnalytics = getDealDisputeAnalyticsSnapshot;
+export type EscrowDisputeAnalytics = DealDisputeAnalyticsSnapshot;
 
 export async function getEscrowReconciliationAlerts(
   limit = 20

@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { DealDisputeSeverity, DealDisputeStatus } from '@prisma/client';
 import { getServerSession } from 'next-auth/next';
@@ -14,7 +15,12 @@ import { AdminMarketplaceIntelligence } from '@/components/marketplace/deals/Adm
 import { SchedulerJobTriggerButton } from '@/components/marketplace/deals/SchedulerJobTriggerButton';
 import { authOptions } from '@/lib/auth/options';
 import { getNotificationDeliveryStats } from '@/lib/events/queue';
-import { getEscrowDisputeQueue, getEscrowFundingLatencyMetrics, getEscrowReconciliationAlerts } from '@/lib/escrow/metrics';
+import {
+  getEscrowDisputeQueue,
+  getEscrowDisputeAnalytics,
+  getEscrowFundingLatencyMetrics,
+  getEscrowReconciliationAlerts,
+} from '@/lib/escrow/metrics';
 import { getJobHealth, type JobHealthEntry } from '@/lib/jobs/scheduler';
 import { getMarketplaceIntelligenceOverview } from '@/lib/intelligence/hub';
 import { getPremiumProfileForUser } from '@/lib/premium/entitlements';
@@ -190,6 +196,25 @@ function availableStatusTransitions(status: DealDisputeStatus): Array<{ status: 
   }
 }
 
+function formatHours(value: number | null) {
+  if (value == null) {
+    return '–';
+  }
+
+  return `${value.toFixed(1)} h`;
+}
+
+function recommendationPriorityTone(priority: 'low' | 'medium' | 'high') {
+  switch (priority) {
+    case 'high':
+      return 'border border-destructive/60 bg-destructive/10 text-destructive';
+    case 'medium':
+      return 'border border-amber-400/60 bg-amber-100 text-amber-800';
+    default:
+      return 'border border-muted bg-muted text-muted-foreground';
+  }
+}
+
 function formatBacklog(job: JobHealthEntry) {
   if (!job.backlogRunCount || job.backlogRunCount <= 0) {
     return '–';
@@ -290,11 +315,12 @@ export default async function AdminOperationsPage({ searchParams }: AdminOperati
     return <p className="text-sm text-muted-foreground">Kein Zugriff auf Operations-Metriken.</p>;
   }
 
-  const [{ jobs, logs }, notificationStats, disputeQueue, reconciliationAlerts, fundingMetrics] =
+  const [{ jobs, logs }, notificationStats, disputeQueue, disputeAnalytics, reconciliationAlerts, fundingMetrics] =
     await Promise.all([
       getJobHealth(),
       getNotificationDeliveryStats(),
       getEscrowDisputeQueue(),
+      getEscrowDisputeAnalytics(),
       getEscrowReconciliationAlerts(),
       getEscrowFundingLatencyMetrics(),
     ]);
@@ -336,6 +362,54 @@ export default async function AdminOperationsPage({ searchParams }: AdminOperati
 
   return (
     <div className="space-y-6">
+      {premiumProfile?.dunningState === 'PAYMENT_FAILED' ? (
+        <Card className="border-destructive/50 bg-destructive/10">
+          <CardHeader>
+            <CardTitle>Premium-Zahlung ausstehend</CardTitle>
+            <CardDescription>
+              {premiumProfile.gracePeriodEndsAt
+                ? `Grace Period endet am ${new Date(premiumProfile.gracePeriodEndsAt).toLocaleDateString('de-DE')} – bitte Zahldaten aktualisieren.`
+                : 'Zahlung fehlgeschlagen. Bitte die hinterlegte Zahlungsmethode aktualisieren, um Premium-Entitlements zu sichern.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-sm">
+            <div className="text-destructive-foreground">
+              Concierge- und Analytics-Funktionen werden nach Ablauf der Grace Period deaktiviert.
+            </div>
+            <Link
+              href="/admin/deals/operations/upgrade"
+              className="inline-flex items-center rounded-md bg-destructive px-4 py-2 font-medium text-destructive-foreground"
+            >
+              {premiumProfile.upgradePrompt?.cta ?? 'Zahlung aktualisieren'}
+            </Link>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {premiumProfile?.isSeatCapacityExceeded ? (
+        <Card className="border-amber-400/60 bg-amber-50">
+          <CardHeader>
+            <CardTitle>Premium-Sitzplatzlimit erreicht</CardTitle>
+            <CardDescription>
+              Premium-Entitlements sind workspace-weit blockiert, bis Sitzplätze freigegeben oder erweitert werden.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-sm">
+            <div className="text-amber-800">
+              {premiumProfile.seatsInUse != null && premiumProfile.seatCapacity != null
+                ? `${premiumProfile.seatsInUse} von ${premiumProfile.seatCapacity} Sitzplätzen belegt.`
+                : 'Aktuelle Sitzplatzbelegung im Abrechnungsbereich prüfen.'}
+            </div>
+            <Link
+              href="/admin/deals/operations/upgrade"
+              className="inline-flex items-center rounded-md bg-amber-500 px-4 py-2 font-medium text-amber-50"
+            >
+              Sitzplätze verwalten
+            </Link>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="space-y-3">
         <form
           method="get"
@@ -772,6 +846,44 @@ export default async function AdminOperationsPage({ searchParams }: AdminOperati
 
       <Card>
         <CardHeader>
+          <CardTitle>Dispute Insights</CardTitle>
+          <CardDescription>Resolution-Metriken der letzten 30 Tage.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-4">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Offene Disputes</p>
+            <p className="text-2xl font-semibold">{disputeAnalytics.totalOpen}</p>
+            <p className="text-xs text-muted-foreground">{disputeAnalytics.totalEscalated} eskaliert</p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Abgeschlossen (30d)</p>
+            <p className="text-2xl font-semibold">{disputeAnalytics.resolvedLast30d}</p>
+            <p className="text-xs text-muted-foreground">
+              Ø Abschlusszeit {formatHours(disputeAnalytics.averageResolutionHoursLast30d)}
+            </p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">SLA-Verletzungsrate</p>
+            <p className="text-2xl font-semibold">
+              {disputeAnalytics.slaBreachRateLast30d != null
+                ? `${(disputeAnalytics.slaBreachRateLast30d * 100).toFixed(0)} %`
+                : '–'}
+            </p>
+            <p className="text-xs text-muted-foreground">Berechnet auf Basis aller abgeschlossenen Fälle</p>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Ausgang (30d)</p>
+            <ul className="text-sm">
+              <li>Buyer: {disputeAnalytics.winLossBreakdownLast30d.buyer}</li>
+              <li>Seller: {disputeAnalytics.winLossBreakdownLast30d.seller}</li>
+              <li>Neutral: {disputeAnalytics.winLossBreakdownLast30d.neutral}</li>
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Dispute-Queue</CardTitle>
           <CardDescription>Aktuelle Eskalationen mit SLA-Fälligkeiten und Zuständigkeiten.</CardDescription>
         </CardHeader>
@@ -805,9 +917,11 @@ export default async function AdminOperationsPage({ searchParams }: AdminOperati
                   const slaOverdueSince = item.slaBreachedAt
                     ? formatDistanceToNow(new Date(item.slaBreachedAt), { addSuffix: true })
                     : null;
+                  const checklistAnchor = `dispute-${item.id}-checklist`;
 
                   return (
-                    <TableRow key={item.id}>
+                    <Fragment key={item.id}>
+                      <TableRow>
                       <TableCell className="font-medium">
                         <div className="flex flex-col gap-1">
                           <span>{item.summary}</span>
@@ -986,6 +1100,146 @@ export default async function AdminOperationsPage({ searchParams }: AdminOperati
                         </div>
                       </TableCell>
                     </TableRow>
+                    <TableRow className="bg-muted/40">
+                      <TableCell colSpan={7}>
+                        <div className="grid gap-4 md:grid-cols-3" id={`dispute-${item.id}-guidance`}>
+                          <div className="space-y-2">
+                            <p className="text-sm font-medium">Empfohlene Schritte</p>
+                            {item.guidance.recommendations.length > 0 ? (
+                              item.guidance.recommendations.map((recommendation) => (
+                                <div key={recommendation.id} className="rounded-md border bg-background p-3 shadow-sm">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                      <p className="text-sm font-medium">{recommendation.title}</p>
+                                      <p className="text-xs text-muted-foreground">{recommendation.rationale}</p>
+                                    </div>
+                                    <span
+                                      className={`rounded px-2 py-0.5 text-[10px] uppercase ${recommendationPriorityTone(recommendation.priority)}`}
+                                    >
+                                      {recommendation.priority}
+                                    </span>
+                                  </div>
+                                  {recommendation.actions.length > 0 ? (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {recommendation.actions.map((action) => {
+                                        if (action.type === 'status' && action.targetStatus) {
+                                          return (
+                                            <form
+                                              key={`${recommendation.id}-${action.targetStatus}`}
+                                              action={updateDisputeStatusAction}
+                                            >
+                                              <input type="hidden" name="disputeId" value={item.id} />
+                                              <input type="hidden" name="targetStatus" value={action.targetStatus} />
+                                              <Button size="sm" variant="outline" type="submit">
+                                                {action.label}
+                                              </Button>
+                                            </form>
+                                          );
+                                        }
+
+                                        if (action.type === 'workflow' && action.href) {
+                                          const href = action.href.startsWith('#') ? `#${checklistAnchor}` : action.href;
+                                          return (
+                                            <Button key={`${recommendation.id}-${action.label}`} size="sm" variant="secondary" asChild>
+                                              <Link href={href}>{action.label}</Link>
+                                            </Button>
+                                          );
+                                        }
+
+                                        if (action.type === 'communication' && action.templateId) {
+                                          const template = item.guidance.communications.find(
+                                            (entry) => entry.id === action.templateId
+                                          );
+                                          if (!template) {
+                                            return null;
+                                          }
+
+                                          return (
+                                            <details
+                                              key={`${recommendation.id}-${action.templateId}`}
+                                              className="w-full rounded border border-dashed p-2 text-left"
+                                            >
+                                              <summary className="cursor-pointer text-xs font-medium">
+                                                {action.label}
+                                              </summary>
+                                              <div className="mt-2 space-y-1 text-xs">
+                                                <p className="font-semibold">Betreff: {template.subject}</p>
+                                                <pre className="whitespace-pre-wrap rounded bg-muted/60 p-2 text-xs">
+                                                  {template.body}
+                                                </pre>
+                                                <p className="text-[10px] uppercase text-muted-foreground">
+                                                  Ton: {template.tone} · Audience: {template.audience}
+                                                </p>
+                                              </div>
+                                            </details>
+                                          );
+                                        }
+
+                                        return null;
+                                      })}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-muted-foreground">Keine besonderen Empfehlungen – Standardprozess fortsetzen.</p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-sm font-medium">Kommunikationsvorlagen</p>
+                            <ScrollArea className="max-h-52 rounded-md border">
+                              <ul className="space-y-2 p-3 text-sm">
+                                {item.guidance.communications.map((template) => (
+                                  <li key={template.id} className="space-y-1">
+                                    <p className="font-medium">{template.label}</p>
+                                    <p className="text-xs text-muted-foreground">Betreff: {template.subject}</p>
+                                    <pre className="whitespace-pre-wrap rounded bg-muted/60 p-2 text-xs">
+                                      {template.body}
+                                    </pre>
+                                    <p className="text-[10px] uppercase text-muted-foreground">
+                                      Audience: {template.audience} · Ton: {template.tone}
+                                    </p>
+                                  </li>
+                                ))}
+                              </ul>
+                            </ScrollArea>
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-sm font-medium">Compliance & Kennzahlen</p>
+                            <ul className="space-y-2" id={checklistAnchor}>
+                              {item.guidance.checklist.map((check) => (
+                                <li key={check.id} className="flex items-start gap-2 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={check.completed}
+                                    readOnly
+                                    className="mt-1 h-4 w-4 rounded border border-slate-300 text-primary focus-visible:outline-none"
+                                  />
+                                  <div>
+                                    <p>{check.label}</p>
+                                    {check.hint ? <p className="text-xs text-muted-foreground">{check.hint}</p> : null}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="space-y-1 text-xs text-muted-foreground">
+                              <p>Offen seit: {formatHours(item.analytics.openHours)}</p>
+                              <p>
+                                SLA in:
+                                {item.analytics.hoursUntilBreach != null
+                                  ? ` ${formatHours(item.analytics.hoursUntilBreach)}`
+                                  : item.analytics.hoursSinceBreach != null
+                                  ? ` überschritten (${formatHours(item.analytics.hoursSinceBreach)})`
+                                  : ' –'}
+                              </p>
+                              <p>Abschlusszeit: {formatHours(item.analytics.hoursToResolution)}</p>
+                              <p>Reopenings: {item.analytics.reopenedCount}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    </Fragment>
                   );
                 })}
               </TableBody>

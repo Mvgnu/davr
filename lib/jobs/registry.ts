@@ -9,10 +9,12 @@ import { scanDealDisputeSlaBreaches } from './disputes/sla';
 import { runFulfilmentLogisticsSweep } from './fulfilment/reminders';
 import { reconcileEscrowLedgers } from './negotiations/reconciliation';
 import { scanNegotiationSlaWindows } from './negotiations/sla';
+import { dispatchPremiumDunningReminders } from '@/lib/premium/reminders';
 import { registerJob } from './scheduler';
 
 export function registerMarketplaceJobs() {
   const fulfilmentJobMetadata: Record<string, unknown> = {};
+  const premiumReminderMetadata: Record<string, unknown> = {};
 
   registerJob({
     name: 'negotiation-sla-watchdog',
@@ -96,6 +98,17 @@ export function registerMarketplaceJobs() {
       fulfilmentJobMetadata.pendingReminderCount = metrics.pendingReminderCount;
       fulfilmentJobMetadata.remindersProcessed = metrics.remindersProcessed;
       fulfilmentJobMetadata.overdueOrdersEscalated = metrics.overdueOrdersEscalated;
+      fulfilmentJobMetadata.slaAlertsQueued = metrics.slaAlertsQueued;
+    },
+  });
+
+  registerJob({
+    name: 'premium-dunning-reminders',
+    intervalMs: 6 * 60 * 60 * 1000,
+    metadata: premiumReminderMetadata,
+    handler: async () => {
+      const { remindersSent } = await dispatchPremiumDunningReminders();
+      premiumReminderMetadata.remindersSent = remindersSent;
     },
   });
 }

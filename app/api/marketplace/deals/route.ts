@@ -110,6 +110,29 @@ export async function POST(request: NextRequest) {
     }
 
     const buyerProfile = await getPremiumProfileForUser(session.user.id);
+    const buyerPaymentLocked = buyerProfile.dunningState === 'PAYMENT_FAILED' && !buyerProfile.isInGracePeriod;
+    const buyerSeatLocked = buyerProfile.isSeatCapacityExceeded;
+    if (listing.isPremiumWorkflow && buyerPaymentLocked) {
+      return NextResponse.json(
+        {
+          error: 'PREMIUM_PAYMENT_FAILED',
+          message:
+            'Premium-Workflows sind aufgrund eines Zahlungsfehlers vorübergehend gesperrt. Bitte Zahlungsdaten aktualisieren.',
+        },
+        { status: 403 }
+      );
+    }
+
+    if (listing.isPremiumWorkflow && buyerSeatLocked) {
+      return NextResponse.json(
+        {
+          error: 'PREMIUM_SEAT_LIMIT',
+          message: 'Premium-Sitzplatzlimit erreicht. Bitte Plätze freigeben oder Kontingent erhöhen.',
+        },
+        { status: 403 }
+      );
+    }
+
     const negotiationPremiumTier = deriveNegotiationPremiumTier({
       listingIsPremium: Boolean(listing.isPremiumWorkflow),
       buyerTier: buyerProfile.tier,

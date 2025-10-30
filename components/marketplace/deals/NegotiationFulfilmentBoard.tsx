@@ -1,7 +1,8 @@
 'use client';
 
-// meta: component=NegotiationFulfilmentBoard version=0.1 owner=operations scope=logistics
+// meta: component=NegotiationFulfilmentBoard version=0.2 owner=operations scope=logistics
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 
@@ -73,10 +74,10 @@ function normalizeInput(value: string): string | null {
 interface FulfilmentOrderCardProps {
   order: NegotiationFulfilmentOrder;
   actions: FulfilmentActions | null;
-  isParticipant: boolean;
+  canMutate: boolean;
 }
 
-function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderCardProps) {
+function FulfilmentOrderCard({ order, actions, canMutate }: FulfilmentOrderCardProps) {
   const [statusDraft, setStatusDraft] = useState(order.status ?? 'SCHEDULING');
   const [milestoneDraft, setMilestoneDraft] = useState<string>('PICKUP_CONFIRMED');
   const [reminderDraft, setReminderDraft] = useState<string>('PICKUP_WINDOW');
@@ -86,7 +87,7 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleStatusUpdate = async () => {
-    if (!actions?.updateFulfilmentOrder || !isParticipant) {
+    if (!actions?.updateFulfilmentOrder || !canMutate) {
       return;
     }
 
@@ -107,7 +108,7 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
   };
 
   const handleMilestone = async () => {
-    if (!actions?.recordFulfilmentMilestone || !isParticipant) {
+    if (!actions?.recordFulfilmentMilestone || !canMutate) {
       return;
     }
 
@@ -128,7 +129,7 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
   };
 
   const handleReminder = async () => {
-    if (!actions?.scheduleFulfilmentReminder || !isParticipant) {
+    if (!actions?.scheduleFulfilmentReminder || !canMutate) {
       return;
     }
 
@@ -160,11 +161,22 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">Fulfilment #{order.reference ?? order.id.slice(-6)}</CardTitle>
-          <Badge variant="secondary">{order.status ?? 'UNBEKANNT'}</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">{order.status ?? 'UNBEKANNT'}</Badge>
+            {order.carrierSyncStatus ? (
+              <Badge variant="outline">Sync: {order.carrierSyncStatus}</Badge>
+            ) : null}
+          </div>
         </div>
         <CardDescription>
           Abholung: {formatDate(order.pickupWindowStart)} · Lieferung: {formatDate(order.pickupWindowEnd)}
         </CardDescription>
+        {order.carrierCode ? (
+          <p className="text-xs text-muted-foreground">
+            Carrier-Code: {order.carrierCode}
+            {order.lastCarrierSyncAt ? ` · Sync: ${formatDate(order.lastCarrierSyncAt)}` : ''}
+          </p>
+        ) : null}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-2 text-sm text-muted-foreground">
@@ -194,13 +206,13 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
               ))
             )}
           </div>
-          {isParticipant ? (
+          {canMutate ? (
             <div className="grid gap-2 sm:grid-cols-2">
               <div>
                 <Label className="sr-only" htmlFor={`milestone-${order.id}`}>
                   Meilenstein
                 </Label>
-                <Select value={milestoneDraft} onValueChange={setMilestoneDraft}>
+                <Select value={milestoneDraft} onValueChange={setMilestoneDraft} disabled={isSubmitting}>
                   <SelectTrigger id={`milestone-${order.id}`}>
                     <SelectValue placeholder="Meilenstein wählen" />
                   </SelectTrigger>
@@ -220,12 +232,12 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
           ) : null}
         </div>
 
-        {isParticipant ? (
+        {canMutate ? (
           <div className="space-y-2">
             <h4 className="text-sm font-medium">Status & Erinnerungen</h4>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="space-y-2">
-                <Select value={statusDraft} onValueChange={setStatusDraft}>
+                <Select value={statusDraft} onValueChange={setStatusDraft} disabled={isSubmitting}>
                   <SelectTrigger>
                     <SelectValue placeholder="Status wählen" />
                   </SelectTrigger>
@@ -242,7 +254,7 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
                 </Button>
               </div>
               <div className="space-y-2">
-                <Select value={reminderDraft} onValueChange={setReminderDraft}>
+                <Select value={reminderDraft} onValueChange={setReminderDraft} disabled={isSubmitting}>
                   <SelectTrigger>
                     <SelectValue placeholder="Erinnerungstyp" />
                   </SelectTrigger>
@@ -258,6 +270,7 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
                   type="datetime-local"
                   value={reminderTime}
                   onChange={(event) => setReminderTime(event.target.value)}
+                  disabled={isSubmitting}
                 />
                 <Button variant="outline" onClick={handleReminder} disabled={isSubmitting}>
                   Erinnerung planen
@@ -285,6 +298,37 @@ function FulfilmentOrderCard({ order, actions, isParticipant }: FulfilmentOrderC
             </ul>
           )}
         </div>
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium">Carrier-Tracking</h4>
+          {order.carrierManifest ? (
+            <div className="space-y-1 text-xs">
+              <p className="text-muted-foreground">
+                Tracking-Referenz: {order.carrierManifest.trackingReference ?? '—'} · Status:{' '}
+                {order.carrierManifest.pollingStatus}
+              </p>
+              <p className="text-muted-foreground">
+                Letzte Synchronisierung:{' '}
+                {formatDate(order.carrierManifest.lastSyncedAt ?? order.lastCarrierSyncAt)}
+              </p>
+              {order.carrierManifest.trackingEvents.length === 0 ? (
+                <p className="text-muted-foreground">Noch keine Ereignisse vom Carrier.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {order.carrierManifest.trackingEvents.map((event) => (
+                    <li key={event.id} className="flex items-center justify-between">
+                      <span>{event.status}</span>
+                      <span>{formatDate(event.eventTime)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Noch kein Carrier-Manifest registriert. Tragen Sie einen Carrier-Code ein, um Tracking zu aktivieren.
+            </p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -296,6 +340,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
     pickupWindowEnd: '',
     pickupLocation: '',
     deliveryLocation: '',
+    carrierCode: '',
     carrierName: '',
     carrierContact: '',
     carrierServiceLevel: '',
@@ -305,6 +350,58 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
   const [isCreating, setIsCreating] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const isParticipant = role === 'BUYER' || role === 'SELLER' || role === 'ADMIN';
+  const premiumViewer = negotiation.premium?.viewer ?? null;
+  const paymentFailed = premiumViewer?.dunningState === 'PAYMENT_FAILED';
+  const isInGrace = premiumViewer?.isInGracePeriod ?? false;
+  const paymentLocked = paymentFailed && !isInGrace;
+  const seatLocked = premiumViewer?.isSeatCapacityExceeded ?? false;
+  const conciergeActive = premiumViewer?.hasConciergeSla ?? false;
+  const pastDue = premiumViewer?.dunningState === 'PAST_DUE';
+  const entitlementActive = conciergeActive && !paymentLocked && !seatLocked;
+  const mutationEnabled = Boolean(actions) && entitlementActive && isParticipant;
+  const upgradePrompt = premiumViewer?.upgradePrompt;
+
+  let gatingVariant: 'destructive' | 'warning' | 'info' | null = null;
+  let gatingTitle: string | null = null;
+  let gatingDescription: string | null = null;
+  let gatingCtaLabel: string | null = null;
+
+  if (paymentLocked) {
+    gatingVariant = 'destructive';
+    gatingTitle = 'Fulfilment gesperrt – Zahlung fehlgeschlagen';
+    gatingDescription =
+      'Die letzte Premium-Zahlung ist fehlgeschlagen. Aktualisieren Sie die Zahlungsmethode, um Fulfilment-Automation fortzusetzen.';
+    gatingCtaLabel = upgradePrompt?.cta ?? 'Zahlung aktualisieren';
+  } else if (seatLocked) {
+    gatingVariant = 'warning';
+    const seatSummary =
+      premiumViewer?.seatCapacity != null && premiumViewer?.seatsInUse != null
+        ? `${premiumViewer.seatsInUse} von ${premiumViewer.seatCapacity} Sitzplätzen belegt.`
+        : 'Bitte Sitzplatzkontingent im Admin-Center prüfen.';
+    gatingTitle = 'Premium-Sitzplatzlimit erreicht';
+    gatingDescription = `${seatSummary} Fulfilment-Kontrollen bleiben schreibgeschützt, bis Plätze freigegeben werden.`;
+    gatingCtaLabel = 'Sitzplätze verwalten';
+  } else if (!conciergeActive) {
+    gatingVariant = 'info';
+    gatingTitle = 'Concierge-Fulfilment erfordert Premium';
+    gatingDescription =
+      upgradePrompt?.description ??
+      'Concierge-Funktionen (Carrier-Steuerung, SLA-Automation) stehen nur Premium-Workspaces zur Verfügung.';
+    gatingCtaLabel = upgradePrompt?.cta ?? 'Upgrade starten';
+  } else if (pastDue) {
+    gatingVariant = 'warning';
+    gatingTitle = 'Zahlung überfällig – bitte prüfen';
+    gatingDescription =
+      'Die Premium-Rechnung ist überfällig. Fulfilment bleibt aktiv, doch bitte Zahlung zeitnah aktualisieren, um Sperren zu vermeiden.';
+    gatingCtaLabel = upgradePrompt?.cta ?? 'Abrechnung prüfen';
+  }
+
+  const gatingCardClass =
+    gatingVariant === 'destructive'
+      ? 'border-destructive/50 bg-destructive/10'
+      : gatingVariant === 'warning'
+      ? 'border-amber-400/60 bg-amber-50'
+      : 'border-primary/40 bg-primary/5';
 
   const sortedOrders = useMemo(() => {
     return [...(negotiation.fulfilmentOrders ?? [])].sort((a, b) => {
@@ -316,6 +413,11 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
 
   const handleCreate = async () => {
     if (!actions?.createFulfilmentOrder || !isParticipant) {
+      return;
+    }
+
+    if (!entitlementActive) {
+      setCreateError('Fulfilment-Aktionen sind derzeit aufgrund von Premium-Einschränkungen gesperrt.');
       return;
     }
 
@@ -334,6 +436,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
         pickupWindowEnd: new Date(createState.pickupWindowEnd).toISOString(),
         pickupLocation: normalizeInput(createState.pickupLocation),
         deliveryLocation: normalizeInput(createState.deliveryLocation),
+        carrierCode: normalizeInput(createState.carrierCode)?.toUpperCase() ?? null,
         carrierName: normalizeInput(createState.carrierName),
         carrierContact: normalizeInput(createState.carrierContact),
         carrierServiceLevel: normalizeInput(createState.carrierServiceLevel),
@@ -345,6 +448,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
         pickupWindowEnd: '',
         pickupLocation: '',
         deliveryLocation: '',
+        carrierCode: '',
         carrierName: '',
         carrierContact: '',
         carrierServiceLevel: '',
@@ -367,6 +471,34 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
         </p>
       </header>
 
+      {gatingVariant ? (
+        <Card className={`${gatingCardClass}`}>
+          <CardHeader>
+            <CardTitle>{gatingTitle}</CardTitle>
+            <CardDescription>{gatingDescription}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">
+              {upgradePrompt?.headline ?? 'Premium-Abrechnung im Admin-Center verwalten.'}
+            </span>
+            {gatingCtaLabel ? (
+              <Link
+                href="/admin/deals/operations/upgrade"
+                className={`inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium ${
+                  gatingVariant === 'destructive'
+                    ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                    : gatingVariant === 'warning'
+                    ? 'bg-amber-500 text-amber-50 hover:bg-amber-600'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                }`}
+              >
+                {gatingCtaLabel}
+              </Link>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       {feedback ? <p className="text-sm text-green-600">{feedback}</p> : null}
       {createError ? <p className="text-sm text-destructive">{createError}</p> : null}
 
@@ -386,6 +518,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 onChange={(event) =>
                   setCreateState((state) => ({ ...state, pickupWindowStart: event.target.value }))
                 }
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2">
@@ -397,6 +530,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 onChange={(event) =>
                   setCreateState((state) => ({ ...state, pickupWindowEnd: event.target.value }))
                 }
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2">
@@ -407,6 +541,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 onChange={(event) =>
                   setCreateState((state) => ({ ...state, pickupLocation: event.target.value }))
                 }
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2">
@@ -417,6 +552,19 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 onChange={(event) =>
                   setCreateState((state) => ({ ...state, deliveryLocation: event.target.value }))
                 }
+                disabled={!entitlementActive || isCreating}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="carrier-code">Carrier-Code</Label>
+              <Input
+                id="carrier-code"
+                value={createState.carrierCode}
+                placeholder="z. B. MOCK_EXPRESS"
+                onChange={(event) =>
+                  setCreateState((state) => ({ ...state, carrierCode: event.target.value }))
+                }
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2">
@@ -425,6 +573,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 id="carrier-name"
                 value={createState.carrierName}
                 onChange={(event) => setCreateState((state) => ({ ...state, carrierName: event.target.value }))}
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2">
@@ -435,6 +584,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 onChange={(event) =>
                   setCreateState((state) => ({ ...state, carrierServiceLevel: event.target.value }))
                 }
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2">
@@ -445,6 +595,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                 onChange={(event) =>
                   setCreateState((state) => ({ ...state, carrierContact: event.target.value }))
                 }
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="space-y-2 sm:col-span-2">
@@ -456,10 +607,11 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
                   setCreateState((state) => ({ ...state, specialInstructions: event.target.value }))
                 }
                 rows={3}
+                disabled={!entitlementActive || isCreating}
               />
             </div>
             <div className="sm:col-span-2">
-              <Button onClick={handleCreate} disabled={isCreating}>
+              <Button onClick={handleCreate} disabled={!entitlementActive || isCreating}>
                 Fulfilment-Auftrag anlegen
               </Button>
             </div>
@@ -480,7 +632,7 @@ export function NegotiationFulfilmentBoard({ negotiation, actions, role }: Negot
               key={order.id}
               order={order}
               actions={actions}
-              isParticipant={isParticipant}
+              canMutate={mutationEnabled}
             />
           ))
         )}

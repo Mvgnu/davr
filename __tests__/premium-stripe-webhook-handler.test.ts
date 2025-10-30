@@ -146,4 +146,78 @@ describe('handleStripeWebhookEvent', () => {
       })
     );
   });
+
+  it('marks subscription as expired and stores dunning metadata on invoice failure', async () => {
+    const failureTimestamp = Math.floor(Date.now() / 1000);
+    const locatedRecord = {
+      id: 'sub-db-2',
+      userId: 'user-2',
+      tier: 'PREMIUM',
+      status: 'ACTIVE',
+      currentPeriodEndsAt: new Date('2025-02-01T00:00:00.000Z'),
+      cancellationRequestedAt: null,
+      metadata: { premiumLifecycle: { seatCapacity: 5, seatsInUse: 4 } },
+      stripeCustomerId: 'cus_2',
+      stripeSubscriptionId: 'sub_2',
+      stripePriceId: 'price_2',
+      latestInvoiceId: 'in_9',
+    };
+
+    premiumSubscriptionFindFirst.mockImplementation(async (args: any) => {
+      if (args?.where?.stripeSubscriptionId === 'sub_2') {
+        return locatedRecord;
+      }
+
+      return null;
+    });
+
+    premiumSubscriptionUpdate.mockResolvedValue({
+      ...locatedRecord,
+      status: 'EXPIRED',
+      metadata: { premiumLifecycle: { dunningState: 'PAYMENT_FAILED' } },
+      entitlements: [],
+    });
+
+    const { handleStripeWebhookEvent } = await import('@/lib/premium/entitlements');
+
+    const invoiceEvent = {
+      id: 'evt_invoice_failed',
+      type: 'invoice.payment_failed',
+      created: failureTimestamp,
+      data: {
+        object: {
+          id: 'in_10',
+          status: 'open',
+          customer: 'cus_2',
+          subscription: 'sub_2',
+          metadata: { userId: 'user-2' },
+        },
+      },
+    } as unknown as Stripe.Event;
+
+    await handleStripeWebhookEvent(invoiceEvent);
+
+    expect(prismaDouble.$transaction).toHaveBeenCalled();
+    expect(premiumSubscriptionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'sub-db-2' },
+        data: expect.objectContaining({
+          status: 'EXPIRED',
+          latestInvoiceId: 'in_10',
+          metadata: expect.objectContaining({
+            premiumLifecycle: expect.objectContaining({
+              dunningState: 'PAYMENT_FAILED',
+              lastReminderSentAt: null,
+            }),
+          }),
+        }),
+      })
+    );
+    expect(premiumEntitlementCreateMany).not.toHaveBeenCalled();
+    expect(premiumSubscriptionWebhookEventUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ stripeEventId: 'evt_invoice_failed' }),
+      })
+    );
+  });
 });

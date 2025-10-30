@@ -104,6 +104,7 @@ export async function POST(request: NextRequest, { params }: { params: { negotia
       negotiationId: access.negotiation.id,
       reference: validation.data.reference ?? undefined,
       status: validation.data.status ?? undefined,
+      carrierCode: validation.data.carrierCode ?? undefined,
       pickupWindowStart: validation.data.pickupWindowStart ?? undefined,
       pickupWindowEnd: validation.data.pickupWindowEnd ?? undefined,
       pickupLocation: validation.data.pickupLocation ?? undefined,

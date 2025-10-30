@@ -7,6 +7,7 @@ const revisionFindUniqueMock = jest.fn();
 const commentCreateMock = jest.fn();
 const commentUpdateMock = jest.fn();
 const publishNegotiationEventMock = jest.fn();
+const syncContractRevisionAttachmentsMock = jest.fn();
 
 const transactionMock = jest.fn((callback) =>
   callback({
@@ -60,6 +61,10 @@ jest.mock('@/lib/events/negotiations', () => ({
   publishNegotiationEvent: publishNegotiationEventMock,
 }));
 
+jest.mock('@/lib/integrations/storage', () => ({
+  syncContractRevisionAttachments: syncContractRevisionAttachmentsMock,
+}));
+
 describe('contract revision service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -90,6 +95,7 @@ describe('contract revision service', () => {
       ],
       contract: { currentRevisionId: null, documentUrl: null },
     });
+    syncContractRevisionAttachmentsMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -133,6 +139,18 @@ describe('contract revision service', () => {
         triggeredBy: 'user-1',
       })
     );
+    expect(syncContractRevisionAttachmentsMock).toHaveBeenCalledWith({
+      negotiationId: 'neg-1',
+      contractId: 'contract-1',
+      revisionId: 'rev-1',
+      attachments: [
+        {
+          name: 'Draft',
+          url: 'https://cdn/contracts/rev.pdf',
+          mimeType: 'application/pdf',
+        },
+      ],
+    });
   });
 
   it('accepts a revision and updates contract pointers', async () => {

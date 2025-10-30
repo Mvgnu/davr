@@ -5,6 +5,13 @@
 import { ListingStatus, NegotiationStatus } from '@prisma/client';
 import { addSeconds, subDays } from 'date-fns';
 
+import {
+  buildBucketedSeries,
+  detectLatestAnomaly,
+  forecastNextValue,
+  type SeriesSample,
+} from './forecasts';
+
 import { prisma } from '@/lib/db/prisma';
 
 type MaybeNumber = number | null;
@@ -25,6 +32,17 @@ export interface MaterialInsight {
   supplyCount: number;
   supplyDemandDelta: number;
   demandGrowth: MaybeNumber;
+  forecast: {
+    projectedNegotiations: number;
+    projectedGmv: number;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    slope: number;
+    anomaly: {
+      isAnomaly: boolean;
+      zScore: number;
+    };
+    series: { timestamp: string; value: number }[];
+  };
 }
 
 export interface PremiumRecommendation {
@@ -32,6 +50,8 @@ export interface PremiumRecommendation {
   description: string;
   materialId: string | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  targetTier: 'PREMIUM_CORE' | 'CONCIERGE';
+  action: string;
 }
 
 export interface MarketplaceIntelligenceOverview {
@@ -60,6 +80,14 @@ export interface MarketplaceIntelligenceOverview {
   trendingMaterials: MaterialInsight[];
   supplyGaps: MaterialInsight[];
   premiumRecommendations: PremiumRecommendation[];
+  anomalyAlerts: {
+    materialId: string | null;
+    materialName: string;
+    metric: 'NEGOTIATIONS' | 'GMV';
+    zScore: number;
+    severity: 'INFO' | 'ALERT';
+    message: string;
+  }[];
   context: {
     generatedAt: string;
     premiumOnly: boolean;
@@ -81,6 +109,7 @@ const CLOSED_STATUSES = new Set<NegotiationStatus>([
 ]);
 
 interface AggregatedMaterial {
+  key: string;
   materialId: string | null;
   materialName: string;
   materialSlug: string | null;
@@ -119,6 +148,7 @@ function aggregateMaterials(records: NegotiationRecord[]) {
 
     const base: AggregatedMaterial =
       existing ?? {
+        key,
         materialId,
         materialName: record.listing?.material?.name ?? record.listing?.title ?? 'Unbekannt',
         materialSlug: record.listing?.material?.slug ?? null,
@@ -151,7 +181,11 @@ function aggregateMaterials(records: NegotiationRecord[]) {
   return materialMap;
 }
 
-function normaliseMaterial(material: AggregatedMaterial, supplyCount: number, previous?: AggregatedMaterial): MaterialInsight {
+function normaliseMaterial(
+  material: AggregatedMaterial,
+  supplyCount: number,
+  previous?: AggregatedMaterial,
+): MaterialInsight {
   const averagePrice = material.pricedNegotiations > 0 ? material.priceTotal / material.pricedNegotiations : null;
   const demandGrowth = previous ? material.negotiationCount - previous.negotiationCount : material.negotiationCount;
   return {
@@ -184,6 +218,8 @@ function computeRecommendations(materials: MaterialInsight[]): PremiumRecommenda
         'Steuern Sie zusätzliche Premium-Angebote oder priorisierte Lieferkette ein – Nachfrage übersteigt verfügbares Angebot in diesem Zeitraum.',
       materialId: material.materialId,
       confidence: material.demandGrowth != null && material.demandGrowth > 0 ? 'HIGH' : 'MEDIUM',
+      targetTier: 'CONCIERGE',
+      action: 'Fast-Track Fulfilment aktivieren und Concierge-Workflow priorisieren',
     });
   }
 
@@ -199,6 +235,8 @@ function computeRecommendations(materials: MaterialInsight[]): PremiumRecommenda
         'Sichern Sie Bestände und verhandeln Sie Vorausverträge mit Premium-Lieferanten, um auf den Nachfrageanstieg vorbereitet zu sein.',
       materialId: material.materialId,
       confidence: 'MEDIUM',
+      targetTier: 'PREMIUM_CORE',
+      action: 'Inventory-Warnung aktivieren und Verhandlungs-Priorisierung planen',
     });
   }
 
@@ -208,6 +246,8 @@ function computeRecommendations(materials: MaterialInsight[]): PremiumRecommenda
       description: 'Keine signifikanten Ausreißer – überwachen Sie weiter die Pipeline, um Chancen frühzeitig zu erkennen.',
       materialId: null,
       confidence: 'LOW',
+      targetTier: 'PREMIUM_CORE',
+      action: 'Monitoring beibehalten und Reminder für nächste Auswertung setzen',
     });
   }
 
@@ -321,9 +361,24 @@ export async function getMarketplaceIntelligenceOverview({
     },
   } satisfies Parameters<typeof prisma.negotiation.findMany>[0]['select'];
 
-  const [currentNegotiations, previousNegotiations] = await Promise.all([
+  const lookbackWhere = {
+    initiatedAt: {
+      gte: subDays(windowEnd, windowInDays * 4),
+      lt: windowEnd,
+    },
+    ...(premiumOnly
+      ? {
+          premiumTier: {
+            not: null,
+          },
+        }
+      : {}),
+  } as const;
+
+  const [currentNegotiations, previousNegotiations, historicalNegotiations] = await Promise.all([
     prisma.negotiation.findMany({ where: baseWhere, select: negotiationSelect }),
     prisma.negotiation.findMany({ where: previousWhere, select: negotiationSelect }),
+    prisma.negotiation.findMany({ where: lookbackWhere, select: negotiationSelect }),
   ]);
 
   const materialIds = new Set<string>();
@@ -359,10 +414,61 @@ export async function getMarketplaceIntelligenceOverview({
 
   const materialInsights: MaterialInsight[] = [];
 
+  const anomalyAlerts: MarketplaceIntelligenceOverview['anomalyAlerts'] = [];
+  const bucketSizeInDays = Math.max(Math.floor(windowInDays / 4), 1);
+
+  const historicalSeries = new Map<
+    string,
+    {
+      samples: SeriesSample[];
+    }
+  >();
+
+  for (const record of historicalNegotiations) {
+    const materialId = record.listing?.material?.id ?? record.listing?.material_id ?? null;
+    const key = materialId ?? `__listing-${record.listing?.id ?? record.id}`;
+    const entry = historicalSeries.get(key) ?? { samples: [] };
+    entry.samples.push({ occurredAt: record.initiatedAt ?? new Date() });
+    historicalSeries.set(key, entry);
+  }
+
   for (const material of currentMaterialMap.values()) {
     const supplyCount = material.materialId ? supplyCounts.get(material.materialId) ?? 0 : 0;
     const previous = material.materialId ? previousMaterialMap.get(material.materialId) : undefined;
-    materialInsights.push(normaliseMaterial(material, supplyCount, previous));
+    const baseInsight = normaliseMaterial(material, supplyCount, previous);
+    const historicalKey = material.key;
+    const historical = historicalSeries.get(historicalKey);
+    const series = historical ? buildBucketedSeries(historical.samples, bucketSizeInDays) : [];
+    const forecast = forecastNextValue(series);
+    const projectedNegotiations = Math.round(forecast.forecast);
+    const projectedGmv = baseInsight.averagePrice != null ? Number((projectedNegotiations * baseInsight.averagePrice).toFixed(2)) : 0;
+    const anomaly = detectLatestAnomaly(series);
+
+    if (anomaly.isAnomaly) {
+      anomalyAlerts.push({
+        materialId: baseInsight.materialId,
+        materialName: baseInsight.materialName,
+        metric: 'NEGOTIATIONS',
+        zScore: anomaly.zScore,
+        severity: Math.abs(anomaly.zScore) >= 3 ? 'ALERT' : 'INFO',
+        message:
+          anomaly.zScore > 0
+            ? 'Nachfrage-Ausreißer erkannt – prüfen Sie Concierge-Bereitschaft.'
+            : 'Nachfrageeinbruch festgestellt – prüfen Sie aktive Deals und Kommunikation.',
+      });
+    }
+
+    materialInsights.push({
+      ...baseInsight,
+      forecast: {
+        projectedNegotiations,
+        projectedGmv,
+        confidence: forecast.confidence,
+        slope: Number(forecast.slope.toFixed(2)),
+        anomaly,
+        series,
+      },
+    });
   }
 
   materialInsights.sort((a, b) => b.gmv - a.gmv);
@@ -401,6 +507,7 @@ export async function getMarketplaceIntelligenceOverview({
     trendingMaterials,
     supplyGaps,
     premiumRecommendations: computeRecommendations(trendingMaterials),
+    anomalyAlerts,
     context: {
       generatedAt: now.toISOString(),
       premiumOnly,

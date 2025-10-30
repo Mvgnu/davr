@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -48,7 +49,7 @@ export function NegotiationWorkspace({
   const [actionError, setActionError] = useState<string | null>(null);
   const [isUpgrading, setIsUpgrading] = useState(false);
 
-  const { negotiation, actions, isLoading, error, realtime, refresh } = useNegotiationWorkspace(activeNegotiationId);
+  const { negotiation, actions, isLoading, error, realtime, refresh, connectivity } = useNegotiationWorkspace(activeNegotiationId);
   const upgradeTrackedRef = useRef<string | null>(null);
 
   const role: 'BUYER' | 'SELLER' | 'ADMIN' | null = useMemo(() => {
@@ -257,7 +258,65 @@ export function NegotiationWorkspace({
       );
     }
 
-    const disputeDisabled = snapshot.status === 'CANCELLED';
+    const premiumViewer = snapshot.premium?.viewer ?? null;
+    const paymentLocked = premiumViewer?.dunningState === 'PAYMENT_FAILED' && !premiumViewer?.isInGracePeriod;
+    const seatLocked = premiumViewer?.isSeatCapacityExceeded ?? false;
+    const fastTrackEntitled = premiumViewer?.hasDisputeFastTrack ?? false;
+    const disputeDisabled =
+      snapshot.status === 'CANCELLED' || paymentLocked || seatLocked || !fastTrackEntitled;
+    let disputeLockMessage: string | null = null;
+    let disputeLockVariant: 'default' | 'destructive' = 'default';
+
+    if (paymentLocked) {
+      disputeLockMessage =
+        'Premium-Dunning aktiv: Disput-Fast-Track ist bis zur erfolgreichen Zahlung pausiert.';
+      disputeLockVariant = 'destructive';
+    } else if (seatLocked) {
+      disputeLockMessage =
+        'Alle Premium-Sitzplätze sind belegt. Fast-Track-Disputs werden nach Freigabe wieder aktiviert.';
+    } else if (!fastTrackEntitled) {
+      disputeLockMessage =
+        premiumViewer?.upgradePrompt?.description ??
+        'Fast-Track-Disputs stehen nur Premium-Workspaces zur Verfügung. Upgrade im Admin-Center starten.';
+    }
+
+    const workspaceLocked = paymentLocked || seatLocked;
+    const upgradeHref = '/admin/deals/operations/upgrade';
+    const workspaceLockCard = (() => {
+      if (!workspaceLocked) {
+        return null;
+      }
+
+      const variantClass = paymentLocked
+        ? 'border-destructive/50 bg-destructive/10'
+        : 'border-amber-400/60 bg-amber-50';
+      const title = paymentLocked
+        ? 'Verhandlung gesperrt – Zahlung fehlgeschlagen'
+        : 'Verhandlung schreibgeschützt – Sitzplatzlimit erreicht';
+      const description = paymentLocked
+        ? 'Bitte Zahlungsdaten aktualisieren. Nach Ablauf der Grace Period werden Premium-Funktionen vollständig deaktiviert.'
+        : 'Alle Premium-Sitzplätze sind belegt. Entfernen Sie inaktive Nutzer:innen oder erhöhen Sie das Kontingent.';
+      const ctaLabel = paymentLocked
+        ? premiumViewer?.upgradePrompt?.cta ?? 'Zahlung aktualisieren'
+        : premiumViewer?.upgradePrompt?.cta ?? 'Sitzplätze verwalten';
+
+      return (
+        <Card className={variantClass}>
+          <CardHeader>
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="text-sm text-muted-foreground">
+              Premium-Angebote, Gegenangebote und Vertragsaktionen sind vorübergehend nur lesbar.
+            </div>
+            <Button asChild variant={paymentLocked ? 'destructive' : 'secondary'}>
+              <Link href={upgradeHref}>{ctaLabel}</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    })();
 
     return (
       <div className="space-y-6">
@@ -274,6 +333,8 @@ export function NegotiationWorkspace({
             </CardContent>
           </Card>
         ) : null}
+
+        {workspaceLockCard}
 
         {actionError ? (
           <Alert variant="destructive">
@@ -309,7 +370,7 @@ export function NegotiationWorkspace({
               negotiation={snapshot}
               role={role}
               currentUserId={userId}
-              disabled={TERMINAL_STATUSES.has(snapshot.status ?? '')}
+              disabled={TERMINAL_STATUSES.has(snapshot.status ?? '') || workspaceLocked}
               onSignContract={(intent) =>
                 safeAction(actions?.signContract ?? null, {
                   intent,
@@ -317,6 +378,7 @@ export function NegotiationWorkspace({
                 })
               }
               onRefresh={refresh}
+              connectivity={connectivity}
             />
             <NegotiationFulfilmentBoard
               negotiation={snapshot}
@@ -338,11 +400,16 @@ export function NegotiationWorkspace({
               negotiation={snapshot}
               role={role}
               currentUserId={userId}
-              disabled={TERMINAL_STATUSES.has(snapshot.status ?? '')}
+              disabled={TERMINAL_STATUSES.has(snapshot.status ?? '') || workspaceLocked}
               onSubmitOffer={(payload) => safeAction(actions?.submitCounter ?? null, payload)}
               onAcceptOffer={(payload) => safeAction(actions?.acceptOffer ?? null, payload)}
             />
             <EscrowStatusCard escrow={snapshot.escrowAccount ?? null} currency={snapshot.currency ?? currency} />
+            {disputeLockMessage ? (
+              <Alert variant={disputeLockVariant}>
+                <AlertDescription>{disputeLockMessage}</AlertDescription>
+              </Alert>
+            ) : null}
             <NegotiationDisputePanel
               disputes={snapshot.disputes ?? []}
               disabled={disputeDisabled}

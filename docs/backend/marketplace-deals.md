@@ -17,10 +17,13 @@ advance the marketplace from lead generation to transaction completion.
   * `topMaterials` (default `5`): Limits how many material insights are returned in the trending and supply-gap arrays.
 * **Outputs:**
   * `summary`: Counts for total negotiations, closed deals, closure rate, GMV, and the delta versus the previous window.
-  * `trendingMaterials`: Array of material snapshots containing GMV, average price, supply counts, and demand growth signals.
+  * `trendingMaterials`: Array of material snapshots containing GMV, average price, supply counts, demand growth, and a nested
+    `forecast` payload (projected negotiations, GMV estimate, slope, anomaly metadata, and historical series).
   * `supplyGaps`: Sorted subset highlighting where demand exceeds active listings.
-  * `premiumRecommendations`: Machine-readable recommendations (headline, description, confidence) surfaced directly to the
-    admin UI.
+  * `premiumRecommendations`: Machine-readable recommendations (headline, description, confidence, target tier, actionable
+    step) surfaced directly to the admin UI.
+  * `anomalyAlerts`: Optional entries describing statistically significant demand spikes or dips, including severity and a
+    human-readable remediation hint.
 
 ## `POST /api/marketplace/premium/subscription`
 
@@ -74,12 +77,21 @@ advance the marketplace from lead generation to transaction completion.
   * Reconciles the subscription row, updating `status`, `currentPeriodEndsAt`, billing identifiers, and
     `cancellationRequestedAt`.
   * Ensures default entitlements are granted when the status is `ACTIVE` or `TRIALING` and suppresses analytics access when
-    the subscription is cancelled or expired.
+    die Subscription abläuft, das Sitzplatzlimit überschritten ist oder ein Dunning-Status aktiv ist.
+  * Annotates `metadata.premiumLifecycle` during `invoice.payment_failed` callbacks with grace-period deadlines,
+    `dunningState`, and seat usage so downstream jobs and UI can enforce workspace-wide gating.
 * **Error Codes:**
   * `BODY_READ_FAILED`: Request body stream could not be read.
   * `INVALID_SIGNATURE`: Signature header missing or invalid.
   * `WEBHOOK_NOT_CONFIGURED`: `STRIPE_WEBHOOK_SECRET` missing on the server.
   * `PROCESSING_FAILED`: Unexpected persistence failure while applying the event.
+
+## Scheduler: `premium-dunning-reminders`
+
+* **Description:** Background job registered in `lib/jobs/registry.ts` that calls `dispatchPremiumDunningReminders()` every six
+  hours. It scans `PremiumSubscription` records with `dunningState=PAYMENT_FAILED` and an active Grace-Period, stamps
+  `lastReminderSentAt`, and logs a single reminder line to avoid telemetry noise.
+* **Outputs:** Updates the job metadata (`remindersSent`) for observability within the admin operations console.
 
 ## `POST /api/marketplace/deals`
 
@@ -127,6 +139,8 @@ advance the marketplace from lead generation to transaction completion.
   * `SELF_NEGOTIATION_NOT_ALLOWED`: Buyer is listing owner.
   * `LISTING_INACTIVE`: Listing is not currently active.
   * `NEGOTIATION_EXISTS`: Buyer already has an active negotiation.
+  * `PREMIUM_PAYMENT_FAILED`: Buyer workspace is in dunning (Stripe payment failed, Grace-Period abgelaufen) for a premium workflow.
+  * `PREMIUM_SEAT_LIMIT`: Buyer workspace exceeded the Premium seat allotment and must reclaim seats before starting new premium negotiations.
   * `NEGOTIATION_INIT_FAILED`: Unexpected server failure.
 
 ## `GET /api/marketplace/deals/[id]`
@@ -146,8 +160,8 @@ advance the marketplace from lead generation to transaction completion.
 
 ### `GET /api/marketplace/deals/{negotiationId}/fulfilment/orders`
 
-* **Description:** Returns all fulfilment orders tied to the negotiation including milestones and scheduled reminders so the
-  workspace can render the logistics board.
+* **Description:** Returns all fulfilment orders tied to the negotiation including milestones, scheduled reminders, carrier
+  sync status, and the latest tracking events so the workspace can render the logistics board with SLA context.
 * **Authentication:** Required. Caller must be the buyer, seller, or an admin.
 * **Success Response:**
   ```json
@@ -159,10 +173,19 @@ advance the marketplace from lead generation to transaction completion.
         "pickupWindowStart": "2025-11-01T08:00:00.000Z",
         "pickupWindowEnd": "2025-11-01T10:00:00.000Z",
         "carrierName": "DHL",
+        "carrierCode": "MOCK_EXPRESS",
+        "carrierSyncStatus": "IN_TRANSIT",
         "milestones": [
           { "type": "CREATED", "occurredAt": "2025-10-30T10:00:00.000Z" }
         ],
-        "reminders": []
+        "reminders": [],
+        "carrierManifest": {
+          "trackingReference": "MOCK_EXPRESS-ful_123",
+          "pollingStatus": "IN_TRANSIT",
+          "trackingEvents": [
+            { "status": "MANIFEST_RECEIVED", "eventTime": "2025-10-30T09:00:00.000Z" }
+          ]
+        }
       }
     ]
   }
@@ -174,7 +197,8 @@ advance the marketplace from lead generation to transaction completion.
 ### `POST /api/marketplace/deals/{negotiationId}/fulfilment/orders`
 
 * **Description:** Creates a fulfilment order with pickup and delivery metadata, carrier notes, and an initial “created”
-  milestone. Emits a negotiation activity via `FULFILMENT_ORDER_CREATED`.
+  milestone. Emits a negotiation activity via `FULFILMENT_ORDER_CREATED` and, when a `carrierCode` is supplied, registers the
+  shipment with the configured carrier provider to bootstrap tracking.
 * **Authentication:** Required. Buyer, seller, or admins can create orders.
 * **Request Body:**
   ```json
@@ -183,6 +207,7 @@ advance the marketplace from lead generation to transaction completion.
     "pickupWindowEnd": "2025-11-01T10:00:00.000Z",
     "pickupLocation": "Lager Nord",
     "deliveryLocation": "Werk Süd",
+    "carrierCode": "MOCK_EXPRESS",
     "carrierName": "DHL Freight",
     "carrierContact": "ops@example.com"
   }
@@ -193,6 +218,19 @@ advance the marketplace from lead generation to transaction completion.
   * `UNAUTHENTICATED`: Session missing.
   * `VALIDATION_ERROR`: Invalid pickup window or missing data.
   * `NEGOTIATION_FORBIDDEN`: Caller is not buyer, seller, or admin.
+* **Notes:** Client gating disables creation when the viewer loses concierge entitlements (seat overflow, dunning past grace,
+  missing `CONCIERGE_SLA`). API requests from admins bypass the UI but should honour the same premium checks before exposing
+  write controls.
+
+#### Carrier provider registry & SLA analytics
+
+* **Module:** `lib/fulfilment/providers/` centralises carrier adapters. The shipped `Mock Express` provider offers deterministic
+  webhook payloads and polling responses for local development.
+* **Integration:** `lib/fulfilment/service.ts` normalises carrier codes, registers manifests through
+  `registerShipment`, and persists tracking events to `FulfilmentCarrierManifest`/`FulfilmentTrackingEvent`. Updating pickup or
+  delivery windows automatically resynchronises the manifest when a carrier is attached.
+* **Analytics:** `getFulfilmentSlaAnalytics(negotiationId)` aggregates pickup and delivery delays, returning breach counts and
+  average deltas in minutes for admin dashboards without introducing additional telemetry sinks.
 
 ### `PATCH /api/marketplace/deals/{negotiationId}/fulfilment/orders/{orderId}`
 
@@ -219,9 +257,9 @@ advance the marketplace from lead generation to transaction completion.
 * **Responsibilities:**
   * Sends due reminders by calling `markReminderSent` which emits `FULFILMENT_REMINDER_SENT` events.
   * Escalates orders whose pickup window elapsed without a pickup milestone by emitting
-    `FULFILMENT_ORDER_UPDATED` with an escalation payload.
-  * Persists run metadata (`pendingReminderCount`, `remindersProcessed`, `overdueOrdersEscalated`) so the admin operations
-    console can display live fulfilment health.
+    `FULFILMENT_ORDER_UPDATED` with an escalation payload and flagging `channel:email`/`channel:sms` for downstream fan-out.
+  * Persists run metadata (`pendingReminderCount`, `remindersProcessed`, `overdueOrdersEscalated`, `slaAlertsQueued`) so the
+    operations console can surface fulfilment health without expanding telemetry scope.
 
 ## `POST /api/marketplace/deals/[id]/offers`
 
@@ -293,6 +331,8 @@ advance the marketplace from lead generation to transaction completion.
   * `NEGOTIATION_CLOSED`: Negotiation already cancelled.
   * `ACTIVE_DISPUTE_EXISTS`: There is already an unresolved dispute for the negotiation.
   * `DISPUTE_CREATION_FAILED`: Unexpected server failure.
+* **Notes:** Fast-Track dispute shortcuts are suppressed in the UI whenever premium grace periods lapse, seat limits are exceeded,
+  or the viewer lacks `DISPUTE_FAST_TRACK`. Backends should mirror these checks if alternative clients emerge.
 
 ## `GET|POST /api/marketplace/deals/[id]/contracts/revisions`
 
@@ -319,6 +359,7 @@ advance the marketplace from lead generation to transaction completion.
   * Increments the revision version counter per contract.
   * Emits `CONTRACT_REVISION_SUBMITTED` so the activity stream and notifications surface the update.
   * Clears transient contract errors so envelope issuance can resume from the latest draft.
+  * Mirrors provided attachments to configured external storage providers (SharePoint/Google Drive) via `lib/integrations/storage.ts` and records diff fingerprints for offline conflict detection.
 * **Error Codes:**
   * `UNAUTHENTICATED`: Session missing.
   * `VALIDATION_FAILED`: Body/attachment payload invalid.
@@ -529,6 +570,9 @@ advance the marketplace from lead generation to transaction completion.
   error details.
 
 The resolved profile populates `NegotiationSnapshot.premium`, unlocking premium-only analytics and SLA overrides in clients.
+`getPremiumProfileForUser` now surfaces lifecycle metadata (`seatCapacity`, `seatsInUse`, `isSeatCapacityExceeded`,
+`gracePeriodEndsAt`, `isInGracePeriod`, `dunningState`, downgrade schedule timestamps) so UI gates can enforce seat limits and
+grace-period billing safeguards consistently across buyer, seller, and admin surfaces.
 
 ## Scheduler & Operations Runbook
 
@@ -590,11 +634,13 @@ The resolved profile populates `NegotiationSnapshot.premium`, unlocking premium-
 * Die Operations-Konsole listet neben Zeitplänen jetzt auch Escrow-spezifische Insights:
   * `lib/disputes/service.ts` aggregiert offene `DealDispute`-Datensätze (inkl. SLA-Fälligkeiten, Severity, Assignment) und
     stellt Transitions-/Assignment-Hilfsfunktionen sowie Escrow-spezifische Workflows bereit, die Audit-Events anlegen.
-  * `lib/escrow/metrics.ts` proxied die Dispute-Queue zu diesem Modul und liefert weiterhin Reconciliation-Mismatches sowie
-    Funding-Latenzen.
+  * `lib/disputes/recommendations.ts` leitet Guidance aus SLA-Bedingungen, Escrow-Status und Evidenzlage ab und stellt
+    kommunikative Vorlagen sowie Compliance-Checklisten für das Cockpit bereit.
+  * `lib/escrow/metrics.ts` proxied die Dispute-Queue und liefert zusätzlich `getEscrowDisputeAnalytics`, womit Wochen-/30-Tage-
+    Auswertungen (SLA-Verletzungsrate, Win/Loss-Breakdown) für das Operations-Dashboard verfügbar sind.
   * `/app/admin/deals/operations/page.tsx` visualisiert diese Daten als Tabellen (Dispute-Queue, Reconciliation-Warnungen)
-    und Kennzahlen (Durchschnitt/Median/90. Perzentil, Overdue-Warteschlange) und bietet Buttons für Status-/Assignment-Wechsel
-    sowie Inline-Formulare für Escrow-Holds, Vergleichsvorschläge und Auszahlungen.
+    und Kennzahlen (Durchschnitt/Median/90. Perzentil, Overdue-Warteschlange) und erweitert jede Dispute-Zeile um empfohlene
+    Schritte, Kommunikationsvorlagen sowie Compliance-Checklisten inklusive SLA-Anzeigen.
   * `__tests__/deal-dispute-e2e.test.ts` fährt den kompletten Lifecycle (Workspace-Raising, Admin-Triage, Escrow-Hold, Vergleich,
     Auszahlung, Statusabschluss) gegen die Server Actions und das Event-Fan-out, sodass Integrationsbrüche sofort auffallen.
   * `lib/jobs/disputes/sla.ts` registriert den `deal-dispute-sla-monitor`, der SLA-Verletzungen automatisch protokolliert und

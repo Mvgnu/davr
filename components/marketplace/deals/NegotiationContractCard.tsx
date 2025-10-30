@@ -2,8 +2,8 @@
 
 // meta: feature=contract-redline owner=platform stage=alpha
 
-import { useMemo, useState } from 'react';
-import { CheckCircle, ExternalLink, FileSignature, FileText, MessageCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle, ExternalLink, FileSignature, FileText, GitCompare, MessageCircle, WifiOff } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import type { WorkspaceConnectivityState } from '@/hooks/useNegotiationWorkspace';
+import type { ClauseDiffSegment } from '@/lib/contracts/diff';
+import { computeClauseDiff, computeNegotiationContractFingerprint, summarizeClauseDiff } from '@/lib/contracts/diff';
 import type { NegotiationSnapshot, ContractRevisionSnapshot } from '@/types/negotiations';
 type RevisionStatus = 'DRAFT' | 'IN_REVIEW' | 'ACCEPTED' | 'REJECTED';
 
@@ -22,6 +25,7 @@ interface NegotiationContractCardProps {
   currentUserId?: string | null;
   disabled?: boolean;
   onRefresh?: () => Promise<unknown> | void;
+  connectivity?: WorkspaceConnectivityState;
 }
 
 const CONTRACT_STATUS_LABELS: Record<string, string> = {
@@ -46,6 +50,7 @@ export function NegotiationContractCard({
   currentUserId,
   disabled,
   onRefresh,
+  connectivity,
 }: NegotiationContractCardProps) {
   const contract = negotiation?.contract;
   const [isSubmittingSignature, setSubmittingSignature] = useState(false);
@@ -59,10 +64,109 @@ export function NegotiationContractCard({
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [pendingRevisionId, setPendingRevisionId] = useState<string | null>(null);
   const [pendingCommentId, setPendingCommentId] = useState<string | null>(null);
+  const [expandedDiffRevisionId, setExpandedDiffRevisionId] = useState<string | null>(null);
+  const [draftMetadata, setDraftMetadata] = useState<{ updatedAt: string | null; fingerprint: string | null }>({
+    updatedAt: null,
+    fingerprint: null,
+  });
+  const draftMetadataRef = useRef(draftMetadata);
 
   const revisions = negotiation?.contractRevisions ?? [];
   const isTerminal = negotiation ? ['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(negotiation.status) : false;
   const canSign = !disabled && !isSubmittingSignature && !isTerminal && role && role !== 'ADMIN';
+  const draftStorageKey = negotiation?.id
+    ? `negotiation:${negotiation.id}:contract-draft:${currentUserId ?? 'guest'}`
+    : null;
+  useEffect(() => {
+    draftMetadataRef.current = draftMetadata;
+  }, [draftMetadata]);
+  useEffect(() => {
+    if (!draftStorageKey || typeof window === 'undefined') {
+      return;
+    }
+
+    const raw = window.localStorage.getItem(draftStorageKey);
+    if (!raw) {
+      setDraftMetadata({ updatedAt: null, fingerprint: null });
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as {
+        summary?: string;
+        body?: string;
+        attachmentName?: string;
+        attachmentUrl?: string;
+        attachmentMime?: string;
+        updatedAt?: string;
+        fingerprint?: string;
+      };
+
+      setDraftMetadata({
+        updatedAt: parsed.updatedAt ?? null,
+        fingerprint: parsed.fingerprint ?? null,
+      });
+
+      if (!revisionSummary && parsed.summary) {
+        setRevisionSummary(parsed.summary);
+      }
+      if (!revisionBody && parsed.body) {
+        setRevisionBody(parsed.body);
+      }
+      if (!attachmentName && parsed.attachmentName) {
+        setAttachmentName(parsed.attachmentName);
+      }
+      if (!attachmentUrl && parsed.attachmentUrl) {
+        setAttachmentUrl(parsed.attachmentUrl);
+      }
+      if (parsed.attachmentMime) {
+        setAttachmentMime(parsed.attachmentMime);
+      }
+    } catch (storageError) {
+      console.error('[contract-revision][draft-parse-failed]', storageError);
+      window.localStorage.removeItem(draftStorageKey);
+      setDraftMetadata({ updatedAt: null, fingerprint: null });
+    }
+  }, [attachmentName, attachmentUrl, draftStorageKey, revisionBody, revisionSummary]);
+  useEffect(() => {
+    if (!draftStorageKey || typeof window === 'undefined') {
+      return;
+    }
+
+    const hasContent = Boolean(
+      revisionSummary.trim() ||
+        revisionBody.trim() ||
+        attachmentName.trim() ||
+        attachmentUrl.trim()
+    );
+
+    if (!hasContent) {
+      window.localStorage.removeItem(draftStorageKey);
+      if (draftMetadataRef.current.fingerprint || draftMetadataRef.current.updatedAt) {
+        setDraftMetadata({ updatedAt: null, fingerprint: null });
+      }
+      return;
+    }
+
+    const updatedAt = new Date().toISOString();
+    const fingerprint = computeNegotiationContractFingerprint(revisionBody, revisionSummary);
+    const payload = {
+      summary: revisionSummary,
+      body: revisionBody,
+      attachmentName,
+      attachmentUrl,
+      attachmentMime,
+      updatedAt,
+      fingerprint,
+    };
+
+    try {
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(payload));
+      setDraftMetadata({ updatedAt, fingerprint });
+    } catch (storageError) {
+      console.error('[contract-revision][draft-write-failed]', storageError);
+    }
+  }, [attachmentMime, attachmentName, attachmentUrl, draftStorageKey, revisionBody, revisionSummary]);
   const requiresSignature = useMemo(() => {
     if (!contract || !role) {
       return false;
@@ -74,6 +178,49 @@ export function NegotiationContractCard({
 
     return (role === 'BUYER' && !buyerSigned) || (role === 'SELLER' && !sellerSigned);
   }, [contract, role]);
+  const revisionDiffMap = useMemo(() => {
+    const entries = new Map<
+      string,
+      {
+        diff: ClauseDiffSegment[];
+        summary: ReturnType<typeof summarizeClauseDiff>;
+        summaryChanged: boolean;
+        previousVersion: number | null;
+      }
+    >();
+
+    revisions.forEach((revision, index) => {
+      const previous = revisions[index + 1];
+      if (!previous) {
+        return;
+      }
+
+      const diff = computeClauseDiff(previous.body, revision.body);
+      entries.set(revision.id, {
+        diff,
+        summary: summarizeClauseDiff(diff),
+        summaryChanged: (previous.summary ?? '') !== (revision.summary ?? ''),
+        previousVersion: previous.version ?? null,
+      });
+    });
+
+    return entries;
+  }, [revisions]);
+  const latestRevisionFingerprint = useMemo(() => {
+    if (!revisions.length) {
+      return null;
+    }
+
+    const [latest] = revisions;
+    return computeNegotiationContractFingerprint(latest.body, latest.summary ?? null);
+  }, [revisions]);
+  const hasDraftConflict = Boolean(
+    draftMetadata.fingerprint && latestRevisionFingerprint && draftMetadata.fingerprint !== latestRevisionFingerprint
+  );
+  const showConflictAlert = hasDraftConflict || Boolean(connectivity?.conflict);
+  const offline = connectivity?.offline ?? false;
+  const lastSyncedLabel = connectivity?.lastSyncedAt ? new Date(connectivity.lastSyncedAt).toLocaleString() : null;
+  const draftSavedLabel = draftMetadata.updatedAt ? new Date(draftMetadata.updatedAt).toLocaleString() : null;
 
   if (!contract) {
     return (
@@ -160,6 +307,10 @@ export function NegotiationContractCard({
       setAttachmentName('');
       setAttachmentUrl('');
       setAttachmentMime('application/pdf');
+      if (draftStorageKey && typeof window !== 'undefined') {
+        window.localStorage.removeItem(draftStorageKey);
+      }
+      setDraftMetadata({ updatedAt: null, fingerprint: null });
       await onRefresh?.();
     } catch (error) {
       setRevisionError(error instanceof Error ? error.message : 'Revision konnte nicht gespeichert werden');
@@ -264,10 +415,61 @@ export function NegotiationContractCard({
     }
   };
 
+  const renderClauseDiffSegment = (segment: ClauseDiffSegment, key: string | number) => {
+    if (segment.type === 'unchanged') {
+      return (
+        <div key={key} className="rounded border border-muted/40 bg-background p-2">
+          {segment.targetClause ?? segment.baseClause ?? ''}
+        </div>
+      );
+    }
+
+    if (segment.type === 'added') {
+      return (
+        <div key={key} className="rounded border border-emerald-200 bg-emerald-50 p-2 text-emerald-900">
+          + {segment.targetClause ?? ''}
+        </div>
+      );
+    }
+
+    if (segment.type === 'removed') {
+      return (
+        <div key={key} className="rounded border border-rose-200 bg-rose-50 p-2 text-rose-900 line-through">
+          - {segment.baseClause ?? ''}
+        </div>
+      );
+    }
+
+    const inlineSegments = segment.inlineDiff?.length
+      ? segment.inlineDiff.map((inline, index) => {
+          const baseClass =
+            inline.type === 'added'
+              ? 'bg-emerald-200/80 text-emerald-900 rounded px-1'
+              : inline.type === 'removed'
+              ? 'bg-rose-200/80 text-rose-900 line-through rounded px-1'
+              : undefined;
+          return (
+            <span key={`${segment.targetIndex ?? segment.baseIndex}-${index}`} className={baseClass}>
+              {inline.text}
+            </span>
+          );
+        })
+      : segment.targetClause ?? segment.baseClause ?? '';
+
+    return (
+      <div key={key} className="rounded border border-blue-200 bg-blue-50 p-2 text-blue-900">
+        {inlineSegments}
+      </div>
+    );
+  };
+
   const renderRevision = (revision: ContractRevisionSnapshot) => {
     const isPending = pendingRevisionId === revision.id;
     const commentPendingPrefix = `${revision.id}:`;
     const isCurrent = contract.currentRevisionId === revision.id || revision.isCurrent;
+    const diffData = revisionDiffMap.get(revision.id);
+    const previousVersion = diffData?.previousVersion ?? null;
+    const showDiff = expandedDiffRevisionId === revision.id;
     return (
       <div key={revision.id} className="rounded-md border border-muted p-3 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -285,6 +487,44 @@ export function NegotiationContractCard({
             {revision.status}
           </Badge>
         </div>
+        {diffData ? (
+          <div className="space-y-2 rounded-md border border-dashed border-primary/30 bg-muted/30 p-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-semibold text-muted-foreground">
+                <GitCompare className="h-3 w-3" /> Vergleich zu v{previousVersion ?? revision.version - 1}
+              </span>
+              <div className="flex items-center gap-3 text-muted-foreground">
+                <span>
+                  +{diffData.summary.added} / -{diffData.summary.removed} / Δ{diffData.summary.modified}
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="gap-1"
+                  onClick={() =>
+                    setExpandedDiffRevisionId((current) => (current === revision.id ? null : revision.id))
+                  }
+                >
+                  {showDiff ? 'Diff verbergen' : 'Diff anzeigen'}
+                </Button>
+              </div>
+            </div>
+            {diffData.summaryChanged ? (
+              <p className="text-muted-foreground">
+                Zusammenfassung aktualisiert: <span className="font-medium">{revision.summary || '—'}</span>
+              </p>
+            ) : null}
+            {showDiff ? (
+              <div className="space-y-2">
+                {diffData.diff.length ? (
+                  diffData.diff.map((segment, segmentIndex) => renderClauseDiffSegment(segment, `${revision.id}-${segmentIndex}`))
+                ) : (
+                  <p className="text-muted-foreground">Keine inhaltlichen Änderungen erkannt.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <p className="whitespace-pre-wrap text-sm border border-dashed border-muted rounded-md p-2 bg-muted/40">
           {revision.body}
         </p>
@@ -421,20 +661,42 @@ export function NegotiationContractCard({
     <Card>
       <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
-          <CardTitle>Vertragsstatus</CardTitle>
-          <CardDescription>Status der Unterzeichnungen, Revisionen und des Entwurfs.</CardDescription>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant={envelopeBadgeVariant}>{envelopeStatus}</Badge>
-          <Badge variant={contract.status === 'SIGNED' ? 'default' : 'secondary'}>{badgeLabel}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-6 text-sm">
-        {contract.lastError ? (
-          <Alert variant="destructive">
-            <AlertTitle>Signaturdienst meldet Fehler</AlertTitle>
-            <AlertDescription>{contract.lastError}</AlertDescription>
-          </Alert>
+      <CardTitle>Vertragsstatus</CardTitle>
+      <CardDescription>Status der Unterzeichnungen, Revisionen und des Entwurfs.</CardDescription>
+    </div>
+    <div className="flex items-center gap-2">
+      <Badge variant={envelopeBadgeVariant}>{envelopeStatus}</Badge>
+      <Badge variant={contract.status === 'SIGNED' ? 'default' : 'secondary'}>{badgeLabel}</Badge>
+    </div>
+  </CardHeader>
+  <CardContent className="space-y-6 text-sm">
+    {offline ? (
+      <Alert variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">
+        <AlertTitle className="flex items-center gap-2">
+          <WifiOff className="h-4 w-4" /> Offline-Modus aktiv
+        </AlertTitle>
+        <AlertDescription>
+          Änderungen werden lokal zwischengespeichert.
+          {draftSavedLabel ? ` Letzter Entwurf gespeichert ${draftSavedLabel}.` : ''}
+          {lastSyncedLabel ? ` Letzte Synchronisierung ${lastSyncedLabel}.` : ''}
+        </AlertDescription>
+      </Alert>
+    ) : null}
+    {showConflictAlert ? (
+      <Alert variant="destructive">
+        <AlertTitle className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4" /> Entwurf weicht von Serverversion ab
+        </AlertTitle>
+        <AlertDescription>
+          Prüfen Sie die Änderungsansicht, bevor Sie eine neue Revision einreichen, um Konflikte zu vermeiden.
+        </AlertDescription>
+      </Alert>
+    ) : null}
+    {contract.lastError ? (
+      <Alert variant="destructive">
+        <AlertTitle>Signaturdienst meldet Fehler</AlertTitle>
+        <AlertDescription>{contract.lastError}</AlertDescription>
+      </Alert>
         ) : null}
         <div className="flex items-center justify-between">
           <span>Käufer</span>

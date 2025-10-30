@@ -9,10 +9,19 @@ import {
   type NegotiationStatus,
   type Prisma,
 } from '@prisma/client';
-import { addHours } from 'date-fns';
+import { addHours, differenceInHours, differenceInMinutes } from 'date-fns';
 
 import { prisma } from '@/lib/db/prisma';
 import { publishNegotiationEvent } from '@/lib/events/negotiations';
+import { buildDealDisputeGuidance, type DealDisputeGuidance } from '@/lib/disputes/recommendations';
+
+export interface DealDisputeAnalytics {
+  openHours: number;
+  hoursUntilBreach: number | null;
+  hoursSinceBreach: number | null;
+  hoursToResolution: number | null;
+  reopenedCount: number;
+}
 
 export interface DealDisputeQueueItem {
   id: string;
@@ -45,6 +54,8 @@ export interface DealDisputeQueueItem {
     message: string | null;
     createdAt: Date;
   } | null;
+  analytics: DealDisputeAnalytics;
+  guidance: DealDisputeGuidance;
 }
 
 export const ACTIVE_DISPUTE_STATUSES = [
@@ -60,6 +71,98 @@ const SEVERITY_SLA_WINDOWS: Record<DealDisputeSeverity, number> = {
   [DealDisputeSeverity.HIGH]: 24,
   [DealDisputeSeverity.CRITICAL]: 12,
 };
+
+function toHourFraction(minutes: number): number {
+  return Number((minutes / 60).toFixed(2));
+}
+
+function countReopenings(events: Array<{ status: DealDisputeStatus | null }>): number {
+  if (!events || events.length === 0) {
+    return 0;
+  }
+
+  let reopenings = 0;
+  let wasClosed = false;
+
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const status = events[index]?.status;
+    if (!status) {
+      continue;
+    }
+
+    if (status === DealDisputeStatus.RESOLVED || status === DealDisputeStatus.CLOSED) {
+      wasClosed = true;
+      continue;
+    }
+
+    if (wasClosed && (status === DealDisputeStatus.OPEN || status === DealDisputeStatus.UNDER_REVIEW)) {
+      reopenings += 1;
+      wasClosed = false;
+    }
+  }
+
+  return reopenings;
+}
+
+function computeDisputeAnalytics(dispute: {
+  raisedAt: Date;
+  slaDueAt: Date | null;
+  slaBreachedAt: Date | null;
+  resolvedAt: Date | null;
+  events: Array<{ status: DealDisputeStatus | null; createdAt: Date }>;
+}): DealDisputeAnalytics {
+  const now = new Date();
+  const openReference = dispute.resolvedAt ?? now;
+  const openMinutes = differenceInMinutes(openReference, dispute.raisedAt);
+  const openHours = toHourFraction(Math.max(openMinutes, 0));
+
+  let hoursUntilBreach: number | null = null;
+  let hoursSinceBreach: number | null = null;
+
+  if (dispute.slaBreachedAt) {
+    const breachMinutes = differenceInMinutes(now, dispute.slaBreachedAt);
+    hoursSinceBreach = toHourFraction(Math.max(breachMinutes, 0));
+  } else if (dispute.slaDueAt) {
+    const diffMinutes = differenceInMinutes(dispute.slaDueAt, now);
+    if (diffMinutes >= 0) {
+      hoursUntilBreach = toHourFraction(diffMinutes);
+    } else {
+      hoursSinceBreach = toHourFraction(Math.abs(diffMinutes));
+    }
+  }
+
+  const hoursToResolution = dispute.resolvedAt
+    ? toHourFraction(Math.max(differenceInMinutes(dispute.resolvedAt, dispute.raisedAt), 0))
+    : null;
+
+  return {
+    openHours,
+    hoursUntilBreach,
+    hoursSinceBreach,
+    hoursToResolution,
+    reopenedCount: countReopenings(dispute.events),
+  };
+}
+
+function determineMissingEvidence(evidence: Array<{ createdAt: Date }>): boolean {
+  if (!evidence || evidence.length === 0) {
+    return true;
+  }
+
+  const latest = evidence.reduce((acc, item) => {
+    if (!acc) {
+      return item.createdAt;
+    }
+
+    return item.createdAt > acc ? item.createdAt : acc;
+  }, evidence[0]?.createdAt ?? null);
+
+  if (!latest) {
+    return true;
+  }
+
+  return differenceInHours(new Date(), latest) >= 24;
+}
 
 export class DealDisputeCreationError extends Error {
   constructor(
@@ -99,7 +202,7 @@ export async function getDealDisputeQueue(limit = 20): Promise<DealDisputeQueueI
       },
       events: {
         orderBy: { createdAt: 'desc' },
-        take: 1,
+        take: 20,
       },
     },
     orderBy: [
@@ -109,10 +212,39 @@ export async function getDealDisputeQueue(limit = 20): Promise<DealDisputeQueueI
     take: limit,
   });
 
-  return disputes.map((dispute) => ({
-    id: dispute.id,
-    negotiationId: dispute.negotiation?.id ?? dispute.negotiationId,
-    negotiationStatus: dispute.negotiation?.status ?? null,
+  return disputes.map((dispute) => {
+    const analytics = computeDisputeAnalytics({
+      raisedAt: dispute.raisedAt,
+      slaDueAt: dispute.slaDueAt ?? null,
+      slaBreachedAt: dispute.slaBreachedAt ?? null,
+      resolvedAt: dispute.resolvedAt ?? null,
+      events: dispute.events,
+    });
+
+    const guidance = buildDealDisputeGuidance({
+      id: dispute.id,
+      negotiationId: dispute.negotiation?.id ?? dispute.negotiationId,
+      status: dispute.status,
+      severity: dispute.severity,
+      category: dispute.category,
+      raisedAt: dispute.raisedAt,
+      slaDueAt: dispute.slaDueAt ?? null,
+      slaBreachedAt: dispute.slaBreachedAt ?? null,
+      resolvedAt: dispute.resolvedAt ?? null,
+      acknowledgedAt: dispute.acknowledgedAt ?? null,
+      escrowStatus: dispute.negotiation?.escrowAccount?.status ?? null,
+      holdAmount: dispute.holdAmount ?? 0,
+      counterProposalAmount: dispute.counterProposalAmount ?? null,
+      resolutionPayoutAmount: dispute.resolutionPayoutAmount ?? null,
+      missingEvidence: determineMissingEvidence(dispute.evidence),
+      reopenedCount: analytics.reopenedCount,
+      analytics,
+    });
+
+    return {
+      id: dispute.id,
+      negotiationId: dispute.negotiation?.id ?? dispute.negotiationId,
+      negotiationStatus: dispute.negotiation?.status ?? null,
     status: dispute.status,
     severity: dispute.severity,
     category: dispute.category,
@@ -144,15 +276,108 @@ export async function getDealDisputeQueue(limit = 20): Promise<DealDisputeQueueI
       label: item.label ?? null,
       uploadedAt: item.createdAt,
     })),
-    latestEvent: dispute.events[0]
-      ? {
-          type: dispute.events[0].type,
-          status: dispute.events[0].status,
-          message: dispute.events[0].message,
-          createdAt: dispute.events[0].createdAt,
-        }
+      latestEvent: dispute.events[0]
+        ? {
+            type: dispute.events[0].type,
+            status: dispute.events[0].status,
+            message: dispute.events[0].message,
+            createdAt: dispute.events[0].createdAt,
+          }
       : null,
-  }));
+      analytics,
+      guidance,
+    };
+  });
+}
+
+export interface DealDisputeAnalyticsSnapshot {
+  totalOpen: number;
+  totalEscalated: number;
+  resolvedLast30d: number;
+  averageResolutionHoursLast30d: number | null;
+  slaBreachRateLast30d: number | null;
+  winLossBreakdownLast30d: {
+    buyer: number;
+    seller: number;
+    neutral: number;
+  };
+}
+
+export async function getDealDisputeAnalyticsSnapshot(): Promise<DealDisputeAnalyticsSnapshot> {
+  const now = new Date();
+  const since = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const [totalOpen, totalEscalated, resolved] = await Promise.all([
+    prisma.dealDispute.count({
+      where: { status: { in: ACTIVE_DISPUTE_STATUSES } },
+    }),
+    prisma.dealDispute.count({
+      where: { status: DealDisputeStatus.ESCALATED },
+    }),
+    prisma.dealDispute.findMany({
+      where: { resolvedAt: { not: null, gte: since } },
+      select: { raisedAt: true, resolvedAt: true },
+    }),
+  ]);
+
+  const resolutionDurations = resolved
+    .map((entry) => {
+      if (!entry.resolvedAt) {
+        return null;
+      }
+
+      return Math.max(differenceInMinutes(entry.resolvedAt, entry.raisedAt), 0);
+    })
+    .filter((value): value is number => value != null);
+
+  const averageResolutionHoursLast30d =
+    resolutionDurations.length > 0
+      ? toHourFraction(
+          resolutionDurations.reduce((acc, value) => acc + value, 0) / resolutionDurations.length
+        )
+      : null;
+
+  const slaBreachesLast30d = await prisma.dealDispute.count({
+    where: { slaBreachedAt: { not: null, gte: since } },
+  });
+
+  const payoutEvents = await prisma.dealDisputeEvent.findMany({
+    where: {
+      type: DealDisputeEventType.ESCROW_PAYOUT_RELEASED,
+      createdAt: { gte: since },
+    },
+    select: { metadata: true },
+  });
+
+  const winLoss = payoutEvents.reduce(
+    (acc, event) => {
+      const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+      const direction = (metadata as any).direction;
+      switch (direction) {
+        case 'REFUND_TO_BUYER':
+          acc.buyer += 1;
+          break;
+        case 'RELEASE_TO_SELLER':
+          acc.seller += 1;
+          break;
+        default:
+          acc.neutral += 1;
+          break;
+      }
+      return acc;
+    },
+    { buyer: 0, seller: 0, neutral: 0 }
+  );
+
+  return {
+    totalOpen,
+    totalEscalated,
+    resolvedLast30d: resolved.length,
+    averageResolutionHoursLast30d,
+    slaBreachRateLast30d:
+      resolved.length > 0 ? Number((slaBreachesLast30d / resolved.length).toFixed(2)) : null,
+    winLossBreakdownLast30d: winLoss,
+  };
 }
 
 interface CreateDealDisputeInput {

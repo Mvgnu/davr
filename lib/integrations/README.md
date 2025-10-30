@@ -5,6 +5,7 @@ This directory hosts client modules that encapsulate interactions with third-par
 ## Modules
 
 - `escrow.ts`: Mock escrow provider abstraction used by the marketplace deal workflow until a real provider is connected.
+- `storage.ts`: External document storage adapters (SharePoint/Google Drive) used to mirror contract revision attachments.
 
 ## Conventions
 

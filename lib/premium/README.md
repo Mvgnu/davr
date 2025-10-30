@@ -15,8 +15,18 @@ reconcile lifecycle updates.
 
 `lib/premium/entitlements.ts` now includes `handleStripeWebhookEvent`, which
 persists lifecycle callbacks (`customer.subscription.updated`, `invoice.paid`,
-`checkout.session.completed`) via the new `PremiumSubscriptionWebhookEvent`
-table. The handler reconciles subscription status, billing identifiers, and
-default entitlements, removing premium analytics from the workspace when a
-subscription expires or is cancelled. The negotiation API forwards the updated
-`upgradePrompt` so frontend components can display upsell messaging instantly.
+`invoice.payment_failed`, `checkout.session.completed`) via the
+`PremiumSubscriptionWebhookEvent` table. The handler reconciles subscription
+status, billing identifiers, seat usage metadata, grace periods, and default
+entitlements, removing premium analytics from the workspace when eine
+Subscription ausläuft, das Sitzplatzlimit überschritten ist oder eine Zahlung
+nach Ablauf der Grace-Period nicht eingeht. The negotiation API forwards the
+updated `upgradePrompt` so frontend components can display upsell or dunning
+messaging instantly.
+
+`lib/premium/reminders.ts` adds a lean reminder dispatcher that scans
+`PremiumSubscription` records for payment failures still innerhalb der
+Grace-Period and stamps `lastReminderSentAt` when a nudge is issued. The module
+is wired into `lib/jobs/registry.ts` as `premium-dunning-reminders`, updating
+job metadata with the number of reminders sent to aid operations oversight
+without adding extra telemetry sinks.

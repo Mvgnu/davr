@@ -182,6 +182,9 @@ export interface NegotiationFulfilmentOrder {
   id: string;
   status: string;
   reference?: string | null;
+  carrierCode?: string | null;
+  carrierSyncStatus?: string | null;
+  lastCarrierSyncAt?: string | null;
   pickupWindowStart?: string | null;
   pickupWindowEnd?: string | null;
   pickupLocation?: string | null;
@@ -194,6 +197,25 @@ export interface NegotiationFulfilmentOrder {
   specialInstructions?: string | null;
   milestones: NegotiationFulfilmentMilestone[];
   reminders: NegotiationFulfilmentReminder[];
+  carrierManifest?: NegotiationFulfilmentManifest | null;
+}
+
+export interface NegotiationFulfilmentManifest {
+  carrierCode: string;
+  pollingStatus: string;
+  trackingReference?: string | null;
+  lastSyncedAt?: string | null;
+  manifestPayload?: Record<string, unknown> | null;
+  trackingEvents: NegotiationFulfilmentTrackingEvent[];
+}
+
+export interface NegotiationFulfilmentTrackingEvent {
+  id: string;
+  status: string;
+  description?: string | null;
+  eventTime: string;
+  location?: string | null;
+  rawPayload?: Record<string, unknown> | null;
 }
 
 export interface PremiumViewerProfile {
@@ -205,7 +227,29 @@ export interface PremiumViewerProfile {
   hasAdvancedAnalytics: boolean;
   hasConciergeSla: boolean;
   hasDisputeFastTrack: boolean;
+  seatCapacity?: number | null;
+  seatsInUse?: number | null;
+  seatsAvailable?: number | null;
+  isSeatCapacityExceeded?: boolean;
+  gracePeriodEndsAt?: string | null;
+  isInGracePeriod?: boolean;
+  isDowngradeScheduled?: boolean;
+  downgradeAt?: string | null;
+  downgradeTargetTier?: string | null;
+  dunningState?: string;
+  lastPaymentFailureAt?: string | null;
+  lastReminderSentAt?: string | null;
   upgradePrompt?: PremiumUpgradePrompt | null;
+  segment?: 'STANDARD' | 'PREMIUM_CORE' | 'CONCIERGE';
+  recommendations?: PremiumViewerRecommendation[];
+}
+
+export interface PremiumViewerRecommendation {
+  headline: string;
+  action: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  rationale?: string;
+  targetTier: 'PREMIUM_CORE' | 'CONCIERGE';
 }
 
 export interface NegotiationPremiumSummary {

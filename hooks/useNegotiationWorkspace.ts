@@ -27,13 +27,60 @@ interface NegotiationActionOptions {
   optimisticUpdate?: (current: NegotiationSnapshot) => NegotiationSnapshot;
 }
 
+export interface WorkspaceConnectivityState {
+  offline: boolean;
+  lastSyncedAt: string | null;
+  conflict: boolean;
+  source: 'cache' | 'network';
+}
+
+function computeSnapshotFingerprint(snapshot: NegotiationSnapshot | null): string | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  const revision = snapshot.contractRevisions?.[0];
+  const revisionToken = revision ? `${revision.id}:${revision.updatedAt ?? ''}:${revision.body.length}` : 'none';
+  const offerToken = snapshot.offers?.[0]?.id ?? 'none';
+  const activityToken = snapshot.activities?.[0]?.occurredAt ?? 'none';
+  return `${snapshot.status}:${revisionToken}:${offerToken}:${activityToken}`;
+}
+
 export function useNegotiationWorkspace(negotiationId?: string | null) {
   const key = negotiationId ? `/api/marketplace/deals/${negotiationId}` : null;
+  const storageKey = negotiationId ? `negotiation-cache:${negotiationId}` : null;
+
+  const [cachedNegotiation, setCachedNegotiation] = useState<NegotiationSnapshot | null>(() => {
+    if (typeof window === 'undefined' || !storageKey) {
+      return null;
+    }
+
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(raw) as NegotiationSnapshot;
+    } catch (parseError) {
+      console.error('[negotiation-workspace][cache-invalid]', parseError);
+      window.localStorage.removeItem(storageKey);
+      return null;
+    }
+  });
+  const [cachedFingerprint, setCachedFingerprint] = useState<string | null>(() => computeSnapshotFingerprint(cachedNegotiation));
+  const [connectivity, setConnectivity] = useState<WorkspaceConnectivityState>({
+    offline: false,
+    lastSyncedAt: null,
+    conflict: false,
+    source: cachedNegotiation ? 'cache' : 'network',
+  });
 
   const { data, error, isLoading, mutate, isValidating } = useSWR<NegotiationSnapshot>(key, fetchNegotiation, {
     refreshInterval: REFRESH_INTERVAL_MS,
     revalidateOnFocus: true,
     revalidateOnReconnect: true,
+    fallbackData: cachedNegotiation ?? undefined,
   });
 
   const [unreadCount, setUnreadCount] = useState(0);
@@ -162,6 +209,10 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
   }, [flushAckQueue, mutate, negotiationId]);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setConnectivity((current) => ({ ...current, offline: !navigator.onLine }));
+    }
+
     const latestActivity = data?.activities?.[0]?.occurredAt ?? null;
     if (latestActivity) {
       setUnreadCount(0);
@@ -181,6 +232,74 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
       setSlaStatus(expiresAt - now < twentyFourHours ? 'WARNING' : 'OK');
     }
   }, [data?.activities, data?.expiresAt]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleOffline = () => {
+      setConnectivity((current) => ({ ...current, offline: true }));
+    };
+
+    const handleOnline = () => {
+      setConnectivity((current) => ({ ...current, offline: false }));
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!negotiationId) {
+      return;
+    }
+
+    if (error && cachedNegotiation) {
+      setConnectivity((current) => ({ ...current, offline: true, source: 'cache' }));
+    }
+  }, [cachedNegotiation, error, negotiationId]);
+
+  useEffect(() => {
+    if (!negotiationId || !data) {
+      return;
+    }
+
+    const fingerprint = computeSnapshotFingerprint(data);
+    const hasChanged = fingerprint !== cachedFingerprint;
+
+    if (!hasChanged && connectivity.source === 'network') {
+      setConnectivity((current) => ({
+        ...current,
+        offline: current.offline && typeof navigator !== 'undefined' ? !navigator.onLine : current.offline,
+        lastSyncedAt: current.lastSyncedAt ?? new Date().toISOString(),
+        conflict: false,
+      }));
+      return;
+    }
+
+    if (storageKey && typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(data));
+      } catch (cacheError) {
+        console.error('[negotiation-workspace][cache-write-failed]', cacheError);
+      }
+    }
+
+    setCachedNegotiation(data);
+    setCachedFingerprint(fingerprint);
+    setConnectivity({
+      offline: typeof navigator !== 'undefined' ? !navigator.onLine : false,
+      lastSyncedAt: new Date().toISOString(),
+      conflict: connectivity.source === 'cache' && Boolean(cachedFingerprint && fingerprint && cachedFingerprint !== fingerprint),
+      source: 'network',
+    });
+  }, [cachedFingerprint, connectivity.source, data, negotiationId, storageKey]);
 
   const runAction = useCallback(
     async (endpoint: string, options: NegotiationActionOptions = {}) => {
@@ -214,6 +333,9 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
         await mutate();
         return payload;
       } catch (actionError) {
+        if (actionError instanceof TypeError) {
+          setConnectivity((current) => ({ ...current, offline: true }));
+        }
         if (hasOptimistic && previous) {
           await mutate(previous, { revalidate: false, populateCache: true });
         }
@@ -298,7 +420,7 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
   }, [negotiationId, runAction]);
 
   return {
-    negotiation: data ?? null,
+    negotiation: data ?? cachedNegotiation ?? null,
     isLoading,
     isValidating,
     error: error as Error | undefined,
@@ -309,5 +431,6 @@ export function useNegotiationWorkspace(negotiationId?: string | null) {
       streamConnected,
       slaStatus,
     },
+    connectivity,
   };
 }
