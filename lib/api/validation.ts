@@ -6,6 +6,14 @@ import {
   NotificationDeliveryStatus,
   VerificationStatus,
   OfferType,
+  DealDisputeSeverity,
+  DealDisputeCategory,
+  DealDisputeEvidenceType,
+  ContractRevisionStatus,
+  ContractRevisionCommentStatus,
+  FulfilmentOrderStatus,
+  FulfilmentMilestoneType,
+  FulfilmentReminderType,
 } from '@prisma/client';
 
 /**
@@ -181,6 +189,123 @@ export const escrowMutationSchema = z.object({
 });
 
 export type EscrowMutationInput = z.infer<typeof escrowMutationSchema>;
+
+const disputeEvidenceSchema = z.object({
+  type: z.nativeEnum(DealDisputeEvidenceType).default(DealDisputeEvidenceType.LINK).optional(),
+  url: z.string().url('Ungültige Nachweis-URL'),
+  label: z.string().max(120).optional(),
+});
+
+export const createDealDisputeSchema = z.object({
+  summary: z
+    .string()
+    .min(10, 'Bitte beschreiben Sie den Vorfall mit mindestens 10 Zeichen')
+    .max(240, 'Zusammenfassung darf maximal 240 Zeichen lang sein'),
+  description: z.string().max(2000).optional(),
+  requestedOutcome: z.string().max(500).optional(),
+  severity: z.nativeEnum(DealDisputeSeverity).default(DealDisputeSeverity.MEDIUM).optional(),
+  category: z.nativeEnum(DealDisputeCategory).default(DealDisputeCategory.ESCROW).optional(),
+  attachments: z
+    .array(disputeEvidenceSchema)
+    .max(5, 'Maximal 5 Nachweise erlaubt')
+    .optional(),
+});
+
+export type CreateDealDisputeInput = z.infer<typeof createDealDisputeSchema>;
+
+const fulfilmentWindowSchema = z
+  .object({
+    pickupWindowStart: z.coerce.date().optional().nullable(),
+    pickupWindowEnd: z.coerce.date().optional().nullable(),
+  })
+  .refine(
+    (data) =>
+      !(data.pickupWindowStart && data.pickupWindowEnd) ||
+      data.pickupWindowEnd.getTime() >= data.pickupWindowStart.getTime(),
+    {
+      message: 'Abholzeitraum-Ende muss nach dem Start liegen',
+      path: ['pickupWindowEnd'],
+    }
+  );
+
+export const createFulfilmentOrderSchema = fulfilmentWindowSchema.extend({
+  reference: z.string().max(60).optional().nullable(),
+  pickupLocation: z.string().max(200).optional().nullable(),
+  deliveryLocation: z.string().max(200).optional().nullable(),
+  carrierName: z.string().max(120).optional().nullable(),
+  carrierContact: z.string().max(120).optional().nullable(),
+  carrierServiceLevel: z.string().max(120).optional().nullable(),
+  trackingNumber: z.string().max(120).optional().nullable(),
+  externalId: z.string().max(120).optional().nullable(),
+  specialInstructions: z.string().max(1000).optional().nullable(),
+  status: z.nativeEnum(FulfilmentOrderStatus).default(FulfilmentOrderStatus.SCHEDULING).optional(),
+});
+
+export type CreateFulfilmentOrderInput = z.infer<typeof createFulfilmentOrderSchema>;
+
+export const updateFulfilmentOrderSchema = createFulfilmentOrderSchema.partial().extend({
+  status: z.nativeEnum(FulfilmentOrderStatus).optional(),
+});
+
+export type UpdateFulfilmentOrderInput = z.infer<typeof updateFulfilmentOrderSchema>;
+
+export const recordFulfilmentMilestoneSchema = z.object({
+  type: z.nativeEnum(FulfilmentMilestoneType),
+  occurredAt: z.coerce.date().optional(),
+  notes: z.string().max(500).optional().nullable(),
+  payload: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type RecordFulfilmentMilestoneInput = z.infer<typeof recordFulfilmentMilestoneSchema>;
+
+export const scheduleFulfilmentReminderSchema = z.object({
+  type: z.nativeEnum(FulfilmentReminderType),
+  scheduledFor: z.coerce.date(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type ScheduleFulfilmentReminderInput = z.infer<typeof scheduleFulfilmentReminderSchema>;
+
+const contractRevisionAttachmentSchema = z.object({
+  id: z.string().cuid().optional(),
+  name: z.string().min(1).max(120),
+  url: z.string().url('Ungültige Anhang-URL'),
+  mimeType: z.string().max(120).optional(),
+});
+
+export const createContractRevisionSchema = z.object({
+  body: z
+    .string()
+    .min(20, 'Revision muss mindestens 20 Zeichen enthalten')
+    .max(20000, 'Revision darf maximal 20000 Zeichen enthalten'),
+  summary: z.string().max(400).optional(),
+  attachments: z.array(contractRevisionAttachmentSchema).max(10).optional(),
+  submit: z.boolean().default(true).optional(),
+});
+
+export type CreateContractRevisionInput = z.infer<typeof createContractRevisionSchema>;
+
+export const updateContractRevisionStatusSchema = z.object({
+  status: z.nativeEnum(ContractRevisionStatus),
+});
+
+export type UpdateContractRevisionStatusInput = z.infer<typeof updateContractRevisionStatusSchema>;
+
+export const addRevisionCommentSchema = z.object({
+  body: z
+    .string()
+    .min(1, 'Kommentar darf nicht leer sein')
+    .max(2000, 'Kommentar darf maximal 2000 Zeichen enthalten'),
+  anchor: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type AddRevisionCommentInput = z.infer<typeof addRevisionCommentSchema>;
+
+export const resolveRevisionCommentSchema = z.object({
+  resolved: z.boolean().default(true),
+});
+
+export type ResolveRevisionCommentInput = z.infer<typeof resolveRevisionCommentSchema>;
 
 // Review creation validation
 export const createReviewSchema = z.object({

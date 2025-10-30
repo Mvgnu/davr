@@ -13,6 +13,8 @@ import { NegotiationOfferComposer } from '@/components/marketplace/deals/Negotia
 import { NegotiationTimeline } from '@/components/marketplace/deals/NegotiationTimeline';
 import { EscrowStatusCard } from '@/components/marketplace/deals/EscrowStatusCard';
 import { NegotiationPremiumInsights } from '@/components/marketplace/deals/NegotiationPremiumInsights';
+import { NegotiationDisputePanel } from '@/components/marketplace/deals/NegotiationDisputePanel';
+import { NegotiationFulfilmentBoard } from '@/components/marketplace/deals/NegotiationFulfilmentBoard';
 import { useNegotiationWorkspace } from '@/hooks/useNegotiationWorkspace';
 import type { NegotiationSnapshot } from '@/types/negotiations';
 
@@ -255,6 +257,8 @@ export function NegotiationWorkspace({
       );
     }
 
+    const disputeDisabled = snapshot.status === 'CANCELLED';
+
     return (
       <div className="space-y-6">
         {snapshot.premium?.upgradePrompt ? (
@@ -312,6 +316,21 @@ export function NegotiationWorkspace({
                   userId,
                 })
               }
+              onRefresh={refresh}
+            />
+            <NegotiationFulfilmentBoard
+              negotiation={snapshot}
+              actions={
+                actions
+                  ? {
+                      createFulfilmentOrder: actions.createFulfilmentOrder,
+                      updateFulfilmentOrder: actions.updateFulfilmentOrder,
+                      recordFulfilmentMilestone: actions.recordFulfilmentMilestone,
+                      scheduleFulfilmentReminder: actions.scheduleFulfilmentReminder,
+                    }
+                  : null
+              }
+              role={role}
             />
           </div>
           <div className="space-y-6">
@@ -324,6 +343,22 @@ export function NegotiationWorkspace({
               onAcceptOffer={(payload) => safeAction(actions?.acceptOffer ?? null, payload)}
             />
             <EscrowStatusCard escrow={snapshot.escrowAccount ?? null} currency={snapshot.currency ?? currency} />
+            <NegotiationDisputePanel
+              disputes={snapshot.disputes ?? []}
+              disabled={disputeDisabled}
+              onRaiseDispute={async (payload) => {
+                if (!actions?.raiseDispute) {
+                  throw new Error('Disputaktionen nicht verfügbar');
+                }
+
+                await actions.raiseDispute({
+                  ...payload,
+                  severity: payload.severity,
+                  category: payload.category,
+                  attachments: payload.attachments,
+                });
+              }}
+            />
           </div>
         </div>
       </div>

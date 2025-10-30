@@ -3,6 +3,7 @@
 /**
  * meta: component=NegotiationPremiumInsights version=0.1 owner=platform
  */
+import Link from 'next/link';
 import { differenceInHours, parseISO } from 'date-fns';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,6 +20,39 @@ function resolveHoursOpen(negotiation: NegotiationSnapshot) {
 }
 
 export function NegotiationPremiumInsights({ negotiation }: NegotiationPremiumInsightsProps) {
+  const viewer = negotiation.premium?.viewer;
+  const upgradePrompt = viewer?.upgradePrompt ?? negotiation.premium?.upgradePrompt ?? null;
+
+  if (!viewer || !viewer.hasAdvancedAnalytics) {
+    return (
+      <Card className="border-primary/40 bg-primary/5">
+        <CardHeader>
+          <CardTitle>Premium Insights freischalten</CardTitle>
+          <CardDescription>
+            {upgradePrompt?.description ??
+              'Premium Analytics liefert SLA-Signale, Deal-Durchlaufzeiten und Fast-Track-Funktionen für kritische Verhandlungen.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              {upgradePrompt?.headline ?? 'Jetzt Concierge- und Analytics-Entitlements aktivieren.'}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Für bestehende Trials bitte Checkout abschließen, damit Webhooks Entitlements aktivieren.
+            </p>
+          </div>
+          <Link
+            href="/admin/deals/operations/upgrade"
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            {upgradePrompt?.cta ?? 'Upgrade starten'}
+          </Link>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const hoursOpen = resolveHoursOpen(negotiation);
   const offerCount = negotiation.offers.length;
   const slaStatus = negotiation.premium?.viewer.hasConciergeSla

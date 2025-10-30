@@ -22,6 +22,22 @@ export const NEGOTIATION_DETAIL_INCLUDE = {
     orderBy: { occurredAt: 'desc' as const },
     take: 50,
   },
+  disputes: {
+    orderBy: { raisedAt: 'desc' as const },
+    take: 5,
+    include: {
+      raisedBy: { select: { id: true, name: true, role: true } },
+      assignedTo: { select: { id: true, name: true, email: true } },
+      evidence: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 5,
+      },
+      events: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 5,
+      },
+    },
+  },
   escrowAccount: true,
   contract: {
     include: {
@@ -31,8 +47,32 @@ export const NEGOTIATION_DETAIL_INCLUDE = {
       },
     },
   },
+  contractRevisions: {
+    orderBy: { createdAt: 'desc' as const },
+    take: 12,
+    include: {
+      createdBy: { select: { id: true, name: true, email: true } },
+      comments: {
+        orderBy: { createdAt: 'asc' as const },
+        include: {
+          author: { select: { id: true, name: true, email: true } },
+          resolvedBy: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+  },
   listing: {
     select: { id: true, title: true, seller_id: true, isPremiumWorkflow: true },
+  },
+  fulfilmentOrders: {
+    orderBy: { pickupWindowStart: 'asc' as const },
+    include: {
+      milestones: {
+        orderBy: { occurredAt: 'asc' as const },
+        include: { recordedBy: { select: { id: true, name: true } } },
+      },
+      reminders: { orderBy: { scheduledFor: 'asc' as const } },
+    },
   },
 } satisfies Prisma.NegotiationInclude;
 

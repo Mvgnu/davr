@@ -155,6 +155,64 @@ UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 
 ---
 
+### Billing & Premium
+
+#### `STRIPE_SECRET_KEY`
+**Required**: Yes (for premium upgrades)
+**Type**: Secret String
+**Description**: Server-side Stripe API key used to create Checkout Sessions.
+
+**Example**:
+```env
+STRIPE_SECRET_KEY=sk_live_123
+```
+
+**Security**: Never expose via `NEXT_PUBLIC_` prefix.
+
+#### `STRIPE_WEBHOOK_SECRET`
+**Required**: Yes (for premium webhook processing)
+**Type**: Secret String
+**Description**: Stripe webhook signing secret used to validate subscription lifecycle callbacks.
+
+**Example**:
+```env
+STRIPE_WEBHOOK_SECRET=whsec_123abc
+```
+
+**Security**: Store in server-side secrets manager only.
+
+#### `STRIPE_PRICE_ID_PREMIUM`
+**Required**: Yes (when Premium tier is available)
+**Type**: String
+**Description**: Stripe Price ID for the Premium subscription tier.
+
+**Example**:
+```env
+STRIPE_PRICE_ID_PREMIUM=price_123premium
+```
+
+#### `STRIPE_PRICE_ID_CONCIERGE`
+**Required**: Yes (when Concierge tier is available)
+**Type**: String
+**Description**: Stripe Price ID for the Concierge subscription tier.
+
+**Example**:
+```env
+STRIPE_PRICE_ID_CONCIERGE=price_456concierge
+```
+
+#### `PREMIUM_STRIPE_TRIAL_DAYS`
+**Required**: No (defaults to 14)
+**Type**: Number
+**Description**: Trial period length applied to Stripe subscriptions started via `START_TRIAL`.
+
+**Example**:
+```env
+PREMIUM_STRIPE_TRIAL_DAYS=14
+```
+
+---
+
 ### Email (Future)
 
 #### `SMTP_HOST`

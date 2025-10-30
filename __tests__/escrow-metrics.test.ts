@@ -1,10 +1,9 @@
-const escrowAccountFindMany = jest.fn();
 const escrowTransactionFindMany = jest.fn();
 const escrowAccountCount = jest.fn();
+const getDealDisputeQueueMock = jest.fn();
 
 jest.mock('@prisma/client', () => ({
   EscrowStatus: {
-    DISPUTED: 'DISPUTED',
     AWAITING_FUNDS: 'AWAITING_FUNDS',
   },
   EscrowTransactionType: {
@@ -16,7 +15,6 @@ jest.mock('@prisma/client', () => ({
 jest.mock('@/lib/db/prisma', () => ({
   prisma: {
     escrowAccount: {
-      findMany: escrowAccountFindMany,
       count: escrowAccountCount,
     },
     escrowTransaction: {
@@ -25,51 +23,28 @@ jest.mock('@/lib/db/prisma', () => ({
   },
 }));
 
+jest.mock('@/lib/disputes/service', () => ({
+  getDealDisputeQueue: getDealDisputeQueueMock,
+}));
+
 describe('escrow metrics helpers', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
-    escrowAccountFindMany.mockReset();
     escrowTransactionFindMany.mockReset();
     escrowAccountCount.mockReset();
+    getDealDisputeQueueMock.mockReset();
   });
 
-  it('returns dispute queue items with outstanding amount and labels', async () => {
-    const disputeOccurredAt = new Date('2025-06-05T09:00:00.000Z');
-    escrowAccountFindMany.mockResolvedValue([
-      {
-        status: 'DISPUTED',
-        negotiation: { id: 'neg-123456', status: 'ESCROW_FUNDED' },
-        providerReference: 'prov-1',
-        fundedAmount: 1500,
-        releasedAmount: 500,
-        refundedAmount: 200,
-        updatedAt: new Date('2025-06-05T10:00:00.000Z'),
-        transactions: [
-          {
-            occurredAt: disputeOccurredAt,
-            metadata: { providerEvent: 'dispute_opened' },
-          },
-        ],
-      },
-    ]);
+  it('proxies dispute queue requests to the dispute service', async () => {
+    const queueItem = { id: 'disp-1' };
+    getDealDisputeQueueMock.mockResolvedValue([queueItem]);
 
     const { getEscrowDisputeQueue } = await import('@/lib/escrow/metrics');
-    const result = await getEscrowDisputeQueue();
+    const result = await getEscrowDisputeQueue(5);
 
-    expect(escrowAccountFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { status: 'DISPUTED' },
-        take: 20,
-      })
-    );
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      negotiationId: 'neg-123456',
-      outstandingAmount: 800,
-      lastEventLabel: 'Dispute eröffnet',
-    });
-    expect(result[0].disputedSince.toISOString()).toBe(disputeOccurredAt.toISOString());
+    expect(getDealDisputeQueueMock).toHaveBeenCalledWith(5);
+    expect(result).toEqual([queueItem]);
   });
 
   it('maps reconciliation adjustments into alert items', async () => {

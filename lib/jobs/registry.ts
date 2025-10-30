@@ -5,15 +5,25 @@ import { getPendingNegotiationNotifications, recordNotificationAttempt } from '@
 import { getNotificationTransports } from '@/lib/events/transports';
 import { NotificationDeliveryStatus } from '@prisma/client';
 
+import { scanDealDisputeSlaBreaches } from './disputes/sla';
+import { runFulfilmentLogisticsSweep } from './fulfilment/reminders';
 import { reconcileEscrowLedgers } from './negotiations/reconciliation';
 import { scanNegotiationSlaWindows } from './negotiations/sla';
 import { registerJob } from './scheduler';
 
 export function registerMarketplaceJobs() {
+  const fulfilmentJobMetadata: Record<string, unknown> = {};
+
   registerJob({
     name: 'negotiation-sla-watchdog',
     intervalMs: 15 * 60 * 1000,
     handler: () => scanNegotiationSlaWindows(),
+  });
+
+  registerJob({
+    name: 'deal-dispute-sla-monitor',
+    intervalMs: 10 * 60 * 1000,
+    handler: () => scanDealDisputeSlaBreaches(),
   });
 
   registerJob({
@@ -74,6 +84,18 @@ export function registerMarketplaceJobs() {
           );
         }
       }
+    },
+  });
+
+  registerJob({
+    name: 'fulfilment-logistics-sweep',
+    intervalMs: 5 * 60 * 1000,
+    metadata: fulfilmentJobMetadata,
+    handler: async () => {
+      const metrics = await runFulfilmentLogisticsSweep();
+      fulfilmentJobMetadata.pendingReminderCount = metrics.pendingReminderCount;
+      fulfilmentJobMetadata.remindersProcessed = metrics.remindersProcessed;
+      fulfilmentJobMetadata.overdueOrdersEscalated = metrics.overdueOrdersEscalated;
     },
   });
 }

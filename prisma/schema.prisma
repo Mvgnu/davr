@@ -60,6 +60,14 @@ model User {
   negotiationNotifications NegotiationNotification[]
   premiumSubscriptions  PremiumSubscription[]
   premiumConversionLogs PremiumConversionEvent[]
+  raisedDisputes        DealDispute[]            @relation("RaisedDisputes")
+  assignedDisputes      DealDispute[]            @relation("AssignedDisputes")
+  contractRevisions     DealContractRevision[]   @relation("ContractRevisionAuthor")
+  revisionComments      DealContractRevisionComment[] @relation("RevisionCommentAuthor")
+  resolvedRevisionComments DealContractRevisionComment[] @relation("RevisionCommentResolver")
+  fulfilmentOrdersCreated FulfilmentOrder[]      @relation("FulfilmentOrderCreatedBy")
+  fulfilmentOrdersUpdated FulfilmentOrder[]      @relation("FulfilmentOrderUpdatedBy")
+  fulfilmentMilestonesRecorded FulfilmentMilestone[] @relation("FulfilmentMilestoneRecorder")
 
   @@index([role])
 }
@@ -81,13 +89,32 @@ model PremiumSubscription {
   currentPeriodEndsAt    DateTime?
   cancellationRequestedAt DateTime?
   metadata               Json?
+  stripeCustomerId        String?
+  stripeSubscriptionId   String?
+  stripePriceId          String?
+  checkoutSessionId      String?
+  latestInvoiceId        String?
   createdAt              DateTime                    @default(now())
   updatedAt              DateTime                    @updatedAt
   entitlements           PremiumEntitlement[]
+  webhookEvents          PremiumSubscriptionWebhookEvent[]
   user                   User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
+}
+
+model PremiumSubscriptionWebhookEvent {
+  id              String                 @id @default(cuid())
+  subscriptionId  String?
+  stripeEventId   String                 @unique
+  stripeType      String
+  payload         Json
+  createdAt       DateTime               @default(now())
+  subscription    PremiumSubscription?   @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([subscriptionId])
+  @@index([stripeType, createdAt])
 }
 
 model PremiumEntitlement {
@@ -362,12 +389,15 @@ model Negotiation {
   offers              OfferCounter[]
   statusHistory       NegotiationStatusHistory[]
   contract            DealContract?
+  contractRevisions  DealContractRevision[]
   escrowAccount       EscrowAccount?
   NegotiationActivity NegotiationActivity[]
   notifications      NegotiationNotification[]
   premiumTier         PremiumTier?
   premiumConversionEvents PremiumConversionEvent[]
   contractIntentMetrics ContractIntentMetric[]
+  disputes              DealDispute[]
+  fulfilmentOrders     FulfilmentOrder[]
 
   @@index([listingId])
   @@index([buyerId])
@@ -453,6 +483,69 @@ model NegotiationNotification {
   @@index([deliveryStatus])
 }
 
+model FulfilmentOrder {
+  id                  String                 @id @default(cuid())
+  negotiationId       String
+  reference           String?                @unique
+  status              FulfilmentOrderStatus  @default(DRAFT)
+  pickupWindowStart   DateTime?
+  pickupWindowEnd     DateTime?
+  pickupLocation      String?
+  deliveryLocation    String?
+  carrierName         String?
+  carrierContact      String?
+  carrierServiceLevel String?
+  trackingNumber      String?
+  externalId          String?
+  specialInstructions String?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  negotiation         Negotiation            @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  createdBy           User?                  @relation("FulfilmentOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy           User?                  @relation("FulfilmentOrderUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  milestones          FulfilmentMilestone[]
+  reminders           FulfilmentReminder[]
+
+  @@index([negotiationId])
+  @@index([status])
+  @@index([pickupWindowStart, pickupWindowEnd])
+  @@index([carrierName])
+}
+
+model FulfilmentMilestone {
+  id            String                  @id @default(cuid())
+  orderId       String
+  type          FulfilmentMilestoneType
+  occurredAt    DateTime               @default(now())
+  recordedById  String?
+  notes         String?
+  payload       Json?
+  createdAt     DateTime               @default(now())
+  order         FulfilmentOrder        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  recordedBy    User?                  @relation("FulfilmentMilestoneRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([type])
+  @@index([occurredAt])
+}
+
+model FulfilmentReminder {
+  id            String                  @id @default(cuid())
+  orderId       String
+  type          FulfilmentReminderType
+  scheduledFor  DateTime
+  sentAt        DateTime?
+  metadata      Json?
+  createdAt     DateTime               @default(now())
+  order         FulfilmentOrder        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([type, scheduledFor])
+  @@index([sentAt])
+}
+
 model DealContract {
   id             String         @id @default(cuid())
   negotiationId  String         @unique
@@ -475,6 +568,9 @@ model DealContract {
   negotiation    Negotiation    @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
   documents      DealContractDocument[]
   intentMetrics  ContractIntentMetric[]
+  currentRevisionId String?
+  currentRevision DealContractRevision? @relation("ContractCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+  revisions      DealContractRevision[] @relation("ContractRevisions")
 
   @@index([status])
 }
@@ -515,6 +611,49 @@ model DealContractDocument {
   @@index([status])
 }
 
+model DealContractRevision {
+  id             String                    @id @default(cuid())
+  negotiationId  String
+  contractId     String
+  version        Int
+  summary        String?
+  body           String
+  status         ContractRevisionStatus    @default(DRAFT)
+  isCurrent      Boolean                   @default(false)
+  attachments    Json?
+  createdById    String
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  negotiation    Negotiation               @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  contract       DealContract              @relation("ContractRevisions", fields: [contractId], references: [id], onDelete: Cascade)
+  createdBy      User                      @relation("ContractRevisionAuthor", fields: [createdById], references: [id], onDelete: Cascade)
+  comments       DealContractRevisionComment[]
+  contractAsCurrent DealContract?          @relation("ContractCurrentRevision")
+
+  @@unique([contractId, version])
+  @@index([negotiationId, createdAt])
+  @@index([status, createdAt])
+}
+
+model DealContractRevisionComment {
+  id           String                          @id @default(cuid())
+  revisionId   String
+  authorId     String
+  body         String
+  anchor       Json?
+  status       ContractRevisionCommentStatus   @default(OPEN)
+  resolvedAt   DateTime?
+  resolvedById String?
+  createdAt    DateTime                        @default(now())
+  updatedAt    DateTime                        @updatedAt
+  revision     DealContractRevision            @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  author       User                            @relation("RevisionCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  resolvedBy   User?                           @relation("RevisionCommentResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([revisionId])
+  @@index([status, createdAt])
+}
+
 model ContractIntentMetric {
   id             String                   @id @default(cuid())
   negotiationId  String
@@ -538,6 +677,18 @@ enum ContractIntentEventType {
   PARTICIPANT_SIGNED
   ENVELOPE_COMPLETED
   ENVELOPE_DECLINED
+}
+
+enum ContractRevisionStatus {
+  DRAFT
+  IN_REVIEW
+  ACCEPTED
+  REJECTED
+}
+
+enum ContractRevisionCommentStatus {
+  OPEN
+  RESOLVED
 }
 
 model EscrowAccount {
@@ -571,6 +722,75 @@ model EscrowTransaction {
   @@index([escrowAccountId])
   @@index([type])
   @@index([occurredAt])
+}
+
+model DealDispute {
+  id                 String              @id @default(cuid())
+  negotiationId      String
+  raisedByUserId     String
+  assignedToUserId   String?
+  status             DealDisputeStatus   @default(OPEN)
+  severity           DealDisputeSeverity @default(MEDIUM)
+  category           DealDisputeCategory @default(ESCROW)
+  summary            String
+  description        String?
+  requestedOutcome   String?
+  slaDueAt           DateTime?
+  slaBreachedAt      DateTime?
+  holdAmount         Float               @default(0)
+  counterProposalAmount Float?
+  resolutionPayoutAmount Float?
+  raisedAt           DateTime            @default(now())
+  acknowledgedAt     DateTime?
+  escalatedAt        DateTime?
+  resolvedAt         DateTime?
+  closedAt           DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  negotiation        Negotiation         @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  raisedBy           User                @relation("RaisedDisputes", fields: [raisedByUserId], references: [id], onDelete: Cascade)
+  assignedTo         User?               @relation("AssignedDisputes", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  events             DealDisputeEvent[]
+  evidence           DealDisputeEvidence[]
+
+  @@index([negotiationId])
+  @@index([raisedByUserId])
+  @@index([assignedToUserId])
+  @@index([status])
+  @@index([slaDueAt])
+}
+
+model DealDisputeEvent {
+  id             String                 @id @default(cuid())
+  disputeId      String
+  actorUserId    String?
+  type           DealDisputeEventType
+  status         DealDisputeStatus?
+  message        String?
+  metadata       Json?
+  createdAt      DateTime              @default(now())
+  dispute        DealDispute           @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  actor          User?                 @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([disputeId])
+  @@index([actorUserId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model DealDisputeEvidence {
+  id                String                    @id @default(cuid())
+  disputeId         String
+  uploadedByUserId  String
+  type              DealDisputeEvidenceType   @default(LINK)
+  url               String
+  label             String?
+  createdAt         DateTime                  @default(now())
+  dispute           DealDispute               @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  uploadedBy        User                      @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([disputeId])
+  @@index([uploadedByUserId])
 }
 
 enum ListingType {
@@ -637,6 +857,78 @@ enum EscrowTransactionType {
   RELEASE
   REFUND
   ADJUSTMENT
+  DISPUTE_HOLD
+  DISPUTE_RELEASE
+  DISPUTE_PAYOUT
+}
+
+enum FulfilmentOrderStatus {
+  DRAFT
+  SCHEDULING
+  SCHEDULED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum FulfilmentMilestoneType {
+  CREATED
+  PICKUP_CONFIRMED
+  PICKED_UP
+  IN_TRANSIT
+  ARRIVED_AT_HUB
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum FulfilmentReminderType {
+  PICKUP_WINDOW
+  DELIVERY_WINDOW
+  SLA_BREACH
+}
+
+enum DealDisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  AWAITING_PARTIES
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+enum DealDisputeSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DealDisputeCategory {
+  ESCROW
+  DELIVERY
+  QUALITY
+  OTHER
+}
+
+enum DealDisputeEventType {
+  CREATED
+  STATUS_CHANGED
+  NOTE_ADDED
+  ASSIGNMENT_UPDATED
+  ESCALATION_TRIGGERED
+  SLA_BREACH_RECORDED
+  RESOLUTION_RECORDED
+  EVIDENCE_ATTACHED
+  ESCROW_HOLD_APPLIED
+  ESCROW_COUNTER_PROPOSED
+  ESCROW_PAYOUT_RELEASED
+}
+
+enum DealDisputeEvidenceType {
+  LINK
+  FILE
+  NOTE
 }
 
 enum NegotiationActivityType {
@@ -651,9 +943,23 @@ enum NegotiationActivityType {
   NEGOTIATION_SLA_BREACHED
   CONTRACT_SIGNATURE_REQUESTED
   CONTRACT_SIGNATURE_COMPLETED
+  CONTRACT_REVISION_SUBMITTED
+  CONTRACT_REVISION_ACCEPTED
+  CONTRACT_REVISION_REJECTED
+  CONTRACT_REVISION_COMMENTED
   ESCROW_DISPUTE_OPENED
   ESCROW_DISPUTE_RESOLVED
   ESCROW_STATEMENT_READY
+  ESCROW_DISPUTE_HOLD_APPLIED
+  ESCROW_DISPUTE_COUNTER_PROPOSED
+  ESCROW_DISPUTE_PAYOUT_EXECUTED
+  ESCROW_DISPUTE_SLA_BREACHED
+  FULFILMENT_ORDER_CREATED
+  FULFILMENT_ORDER_SCHEDULED
+  FULFILMENT_ORDER_UPDATED
+  FULFILMENT_MILESTONE_RECORDED
+  FULFILMENT_REMINDER_SCHEDULED
+  FULFILMENT_REMINDER_SENT
 }
 
 enum NegotiationActivityAudience {

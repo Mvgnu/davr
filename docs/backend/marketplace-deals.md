@@ -3,6 +3,84 @@
 The deals API introduces structured negotiations, contract scaffolding, escrow orchestration, and persisted activity streams to
 advance the marketplace from lead generation to transaction completion.
 
+## Marketplace Intelligence Hub Service
+
+* **Module:** `lib/intelligence/hub.ts`
+* **Description:** Aggregates negotiation metrics, pricing signals, and supply-side availability over a configurable rolling
+  window. The helper returns summary KPIs, trending material insights (including GMV, average price, and demand deltas), the
+  most acute supply gaps, and automatically generated premium recommendations for operations teams.
+* **Parameters:**
+  * `windowInDays` (default `30`): Lookback window used for both current and comparison aggregates. Values are clamped to the
+    range 7–120 days.
+  * `premiumOnly` (default `false`): Restricts the aggregation to negotiations with a premium tier so operators can focus on
+    high-value customers.
+  * `topMaterials` (default `5`): Limits how many material insights are returned in the trending and supply-gap arrays.
+* **Outputs:**
+  * `summary`: Counts for total negotiations, closed deals, closure rate, GMV, and the delta versus the previous window.
+  * `trendingMaterials`: Array of material snapshots containing GMV, average price, supply counts, and demand growth signals.
+  * `supplyGaps`: Sorted subset highlighting where demand exceeds active listings.
+  * `premiumRecommendations`: Machine-readable recommendations (headline, description, confidence) surfaced directly to the
+    admin UI.
+
+## `POST /api/marketplace/premium/subscription`
+
+* **Description:** Handles premium upgrade actions. `START_TRIAL` and `UPGRADE_CONFIRMED`
+  now orchestrate Stripe Checkout Sessions and persist the resulting billing
+  metadata on `PremiumSubscription` for reconciliation.
+* **Authentication:** Required. Caller must be an authenticated workspace user.
+* **Request Body:**
+  ```json
+  {
+    "action": "START_TRIAL",
+    "tier": "PREMIUM",
+    "negotiationId": "neg_123"
+  }
+  ```
+* **Success Response:**
+  ```json
+  {
+    "profile": { /* updated premium profile */ },
+    "checkoutSession": {
+      "id": "cs_test_123",
+      "url": "https://checkout.stripe.com/c/pay/cs_test_123"
+    }
+  }
+  ```
+  `checkoutSession` is omitted for CTA impression logging. When present the UI
+  redirects the administrator to the hosted payment page.
+* **Side Effects:**
+  * Calls `createPremiumCheckoutSession` with the tier-specific price ID.
+  * Upserts the subscription, storing `stripeCustomerId`, `stripePriceId`, and
+    the latest `checkoutSessionId` for downstream webhook correlation.
+  * Flags trialing vs. active status immediately so the UI can render
+    provisional access while awaiting Stripe webhooks.
+  * Emits `TRIAL_STARTED` or `UPGRADE_CONFIRMED` conversion events after the
+    session has been created successfully.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `VALIDATION_ERROR`: Unsupported action or tier.
+  * `PAYMENT_PROVIDER_UNAVAILABLE`: Stripe credentials or price IDs missing.
+  * `UPGRADE_PROCESSING_FAILED`: Catch-all for Stripe API or persistence errors.
+
+## `POST /api/marketplace/premium/stripe/webhook`
+
+* **Description:** Accepts Stripe subscription lifecycle events (checkout completion, renewals, cancellations) and keeps
+  `PremiumSubscription` plus entitlement state in sync.
+* **Authentication:** Verified via Stripe signature header (`STRIPE_WEBHOOK_SECRET`).
+* **Request Body:** Raw Stripe event JSON forwarded by Stripe. The handler validates the signature and ignores unrelated
+  event types.
+* **Side Effects:**
+  * Persists each event into `PremiumSubscriptionWebhookEvent` (idempotent via `stripeEventId`).
+  * Reconciles the subscription row, updating `status`, `currentPeriodEndsAt`, billing identifiers, and
+    `cancellationRequestedAt`.
+  * Ensures default entitlements are granted when the status is `ACTIVE` or `TRIALING` and suppresses analytics access when
+    the subscription is cancelled or expired.
+* **Error Codes:**
+  * `BODY_READ_FAILED`: Request body stream could not be read.
+  * `INVALID_SIGNATURE`: Signature header missing or invalid.
+  * `WEBHOOK_NOT_CONFIGURED`: `STRIPE_WEBHOOK_SECRET` missing on the server.
+  * `PROCESSING_FAILED`: Unexpected persistence failure while applying the event.
+
 ## `POST /api/marketplace/deals`
 
 * **Description:** Start a negotiation for a marketplace listing by submitting an initial offer.
@@ -64,6 +142,87 @@ advance the marketplace from lead generation to transaction completion.
   * `NEGOTIATION_FORBIDDEN`: Caller is not a party nor an admin.
   * `NEGOTIATION_EXPIRED`: SLA elapsed and negotiation was auto-closed.
 
+## Fulfilment & Logistics Endpoints
+
+### `GET /api/marketplace/deals/{negotiationId}/fulfilment/orders`
+
+* **Description:** Returns all fulfilment orders tied to the negotiation including milestones and scheduled reminders so the
+  workspace can render the logistics board.
+* **Authentication:** Required. Caller must be the buyer, seller, or an admin.
+* **Success Response:**
+  ```json
+  {
+    "orders": [
+      {
+        "id": "ful_123",
+        "status": "SCHEDULED",
+        "pickupWindowStart": "2025-11-01T08:00:00.000Z",
+        "pickupWindowEnd": "2025-11-01T10:00:00.000Z",
+        "carrierName": "DHL",
+        "milestones": [
+          { "type": "CREATED", "occurredAt": "2025-10-30T10:00:00.000Z" }
+        ],
+        "reminders": []
+      }
+    ]
+  }
+  ```
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `NEGOTIATION_FORBIDDEN`: Caller is not part of the negotiation.
+
+### `POST /api/marketplace/deals/{negotiationId}/fulfilment/orders`
+
+* **Description:** Creates a fulfilment order with pickup and delivery metadata, carrier notes, and an initial “created”
+  milestone. Emits a negotiation activity via `FULFILMENT_ORDER_CREATED`.
+* **Authentication:** Required. Buyer, seller, or admins can create orders.
+* **Request Body:**
+  ```json
+  {
+    "pickupWindowStart": "2025-11-01T08:00:00.000Z",
+    "pickupWindowEnd": "2025-11-01T10:00:00.000Z",
+    "pickupLocation": "Lager Nord",
+    "deliveryLocation": "Werk Süd",
+    "carrierName": "DHL Freight",
+    "carrierContact": "ops@example.com"
+  }
+  ```
+* **Success Response:** Returns the refreshed negotiation snapshot containing the new order so the UI can re-render without an
+  extra fetch.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `VALIDATION_ERROR`: Invalid pickup window or missing data.
+  * `NEGOTIATION_FORBIDDEN`: Caller is not buyer, seller, or admin.
+
+### `PATCH /api/marketplace/deals/{negotiationId}/fulfilment/orders/{orderId}`
+
+* **Description:** Updates carrier, tracking, pickup window, or status information for an existing fulfilment order and emits
+  `FULFILMENT_ORDER_UPDATED` (or `FULFILMENT_ORDER_SCHEDULED`) negotiation events to keep the timeline in sync.
+* **Authentication:** Buyer, seller, or admin required.
+* **Validation:** Payload accepts the same optional fields as creation plus a `status` from the
+  `FulfilmentOrderStatus` enum.
+
+### `POST /api/marketplace/deals/{negotiationId}/fulfilment/orders/{orderId}/milestones`
+
+* **Description:** Records a fulfilment milestone (`PICKUP_CONFIRMED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `CANCELLED`) for
+  the order and appends a corresponding negotiation activity event.
+
+### `POST /api/marketplace/deals/{negotiationId}/fulfilment/orders/{orderId}/reminders`
+
+* **Description:** Schedules notifications for pickup/delivery windows. The fulfilment scheduler job will deliver reminders and
+  mark them as sent so operators can monitor pending logistics tasks.
+
+## Fulfilment Scheduler Job
+
+* **Job Name:** `fulfilment-logistics-sweep`
+* **Interval:** 5 minutes.
+* **Responsibilities:**
+  * Sends due reminders by calling `markReminderSent` which emits `FULFILMENT_REMINDER_SENT` events.
+  * Escalates orders whose pickup window elapsed without a pickup milestone by emitting
+    `FULFILMENT_ORDER_UPDATED` with an escalation payload.
+  * Persists run metadata (`pendingReminderCount`, `remindersProcessed`, `overdueOrdersEscalated`) so the admin operations
+    console can display live fulfilment health.
+
 ## `POST /api/marketplace/deals/[id]/offers`
 
 * **Description:** Submit a counter-offer, automatically switching the lifecycle to `COUNTERING` on the first counter.
@@ -82,6 +241,143 @@ advance the marketplace from lead generation to transaction completion.
   * `NEGOTIATION_CLOSED`: Negotiation already completed/cancelled.
   * `NEGOTIATION_STATUS_INVALID`: Current status forbids new counters.
   * `NEGOTIATION_COUNTER_FAILED`: Unexpected persistence failure.
+
+## `POST /api/marketplace/deals/[id]/disputes`
+
+* **Description:** Allows buyers or sellers to raise a dispute against the active negotiation. Persists the dispute, optional
+  evidence links, and emits `DEAL_DISPUTE_RAISED` events so the admin cockpit receives an immediate notification.
+* **Authentication:** Required. Caller must be the buyer or seller of the negotiation.
+* **Request Body:**
+  ```json
+  {
+    "summary": "Lieferung blieb aus trotz Zahlung",
+    "description": "Spediteur meldet fehlende Ware, bitte prüfen.",
+    "requestedOutcome": "Erneute Zustellung oder Rückerstattung",
+    "severity": "HIGH",
+    "category": "DELIVERY",
+    "attachments": [
+      { "type": "LINK", "url": "https://tracking.example/123", "label": "Tracking" }
+    ]
+  }
+  ```
+* **Success Response:**
+  ```json
+  {
+    "negotiation": {
+      "id": "neg_123",
+      "disputes": [
+        {
+          "id": "disp_1",
+          "status": "OPEN",
+          "severity": "HIGH",
+          "category": "DELIVERY",
+          "summary": "Lieferung blieb aus trotz Zahlung",
+          "evidence": [
+            { "id": "ev_1", "type": "LINK", "url": "https://tracking.example/123", "label": "Tracking" }
+          ]
+        }
+      ]
+    },
+    "message": "Disput wurde erfolgreich eingereicht. Unser Team meldet sich zeitnah."
+  }
+  ```
+* **Side Effects:**
+  * Creates the `DealDispute` row with SLA due date based on severity (12–72 hours).
+  * Records `DealDisputeEvent` entries for creation and evidence attachments.
+  * Stores evidence metadata in the new `DealDisputeEvidence` table for auditability.
+  * Publishes a `DEAL_DISPUTE_RAISED` negotiation event so the notification queue alerts admins instantly.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `VALIDATION_ERROR`: Summary/evidence payload invalid.
+  * `NEGOTIATION_FORBIDDEN`: Caller is not the buyer/seller.
+  * `NEGOTIATION_CLOSED`: Negotiation already cancelled.
+  * `ACTIVE_DISPUTE_EXISTS`: There is already an unresolved dispute for the negotiation.
+  * `DISPUTE_CREATION_FAILED`: Unexpected server failure.
+
+## `GET|POST /api/marketplace/deals/[id]/contracts/revisions`
+
+* **Description:** Lists and records contract revisions for the negotiation. `POST` persists a new revision draft, optionally
+  with annotated attachment URLs, and marks it `IN_REVIEW` so participants can triage changes.
+* **Authentication:** Required. Only negotiation participants or admins may collaborate on revisions.
+* **Request Body (`POST`):**
+  ```json
+  {
+    "summary": "Neue Lieferklausel",
+    "body": "Bitte Abschnitt 4 um Lieferfristen ergänzen...",
+    "attachments": [
+      {
+        "name": "Redline-PDF",
+        "url": "https://cdn.example.com/contracts/neg-123-v3.pdf",
+        "mimeType": "application/pdf"
+      }
+    ]
+  }
+  ```
+* **Success Response:** Returns the newly created revision, including generated version number and metadata. Listing requests
+  return the latest 12 revisions with nested comments for inline collaboration.
+* **Side Effects:**
+  * Increments the revision version counter per contract.
+  * Emits `CONTRACT_REVISION_SUBMITTED` so the activity stream and notifications surface the update.
+  * Clears transient contract errors so envelope issuance can resume from the latest draft.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `VALIDATION_FAILED`: Body/attachment payload invalid.
+  * `CONTRACT_MISSING`: Negotiation has no contract yet.
+  * `REVISION_CREATE_FAILED`: Persistence or event publication failed.
+
+## `PATCH /api/marketplace/deals/[id]/contracts/revisions/[revisionId]`
+
+* **Description:** Updates the lifecycle of a revision (e.g., mark as accepted or rejected) and syncs the active contract pointers.
+* **Authentication:** Required. Buyer, seller, or admin only.
+* **Request Body:**
+  ```json
+  {
+    "status": "ACCEPTED"
+  }
+  ```
+* **Side Effects:**
+  * When accepted, flips all other revisions to `isCurrent = false`, stores the pointer on `DealContract.currentRevisionId`,
+    and updates `draftTerms` plus the active document URL if a PDF attachment is available.
+  * Emits `CONTRACT_REVISION_ACCEPTED` or `CONTRACT_REVISION_REJECTED` events for audit trails.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `FORBIDDEN`: Caller is not authorised to update the revision.
+  * `REVISION_ALREADY_ACCEPTED`: Revision already the active baseline.
+  * `REVISION_STATUS_FAILED`: Persistence failure.
+
+## `POST /api/marketplace/deals/[id]/contracts/revisions/[revisionId]/comments`
+
+* **Description:** Adds an inline discussion comment to a revision to capture requested adjustments or clarifications.
+* **Authentication:** Required. Buyer, seller, or admin.
+* **Request Body:**
+  ```json
+  {
+    "body": "Bitte Lieferfenster konkretisieren."
+  }
+  ```
+* **Side Effects:** Persists the comment, associates it with the revision, and emits `CONTRACT_REVISION_COMMENTED` so
+  participants receive notifications.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `VALIDATION_FAILED`: Empty comment body.
+  * `COMMENT_CREATE_FAILED`: Persistence failure.
+
+## `PATCH /api/marketplace/deals/[id]/contracts/revisions/[revisionId]/comments/[commentId]`
+
+* **Description:** Marks a revision comment as resolved or reopens it for further discussion.
+* **Authentication:** Required. Buyer, seller, or admin.
+* **Request Body:**
+  ```json
+  {
+    "resolved": true
+  }
+  ```
+* **Side Effects:** Updates `ContractRevisionComment.status`, captures the resolver, and emits
+  `CONTRACT_REVISION_COMMENTED` to keep the activity feed consistent.
+* **Error Codes:**
+  * `UNAUTHENTICATED`: Session missing.
+  * `VALIDATION_FAILED`: Missing `resolved` boolean.
+  * `COMMENT_RESOLVE_FAILED`: Persistence failure.
 
 ## `POST /api/marketplace/deals/[id]/accept`
 
@@ -292,9 +588,17 @@ The resolved profile populates `NegotiationSnapshot.premium`, unlocking premium-
     `COPY (SELECT id, "negotiationId", "deliveryStatus", "deliveredAt" FROM "NegotiationNotification" WHERE "occurredAt" >= '<ISO_TIMESTAMP>' ORDER BY "occurredAt") TO STDOUT WITH CSV HEADER`
     and attach it to the incident record for stakeholder sign-off.
 * Die Operations-Konsole listet neben Zeitplänen jetzt auch Escrow-spezifische Insights:
-  * `lib/escrow/metrics.ts` aggregiert offene Disputes, Reconciliation-Mismatches sowie Funding-Latenzen.
+  * `lib/disputes/service.ts` aggregiert offene `DealDispute`-Datensätze (inkl. SLA-Fälligkeiten, Severity, Assignment) und
+    stellt Transitions-/Assignment-Hilfsfunktionen sowie Escrow-spezifische Workflows bereit, die Audit-Events anlegen.
+  * `lib/escrow/metrics.ts` proxied die Dispute-Queue zu diesem Modul und liefert weiterhin Reconciliation-Mismatches sowie
+    Funding-Latenzen.
   * `/app/admin/deals/operations/page.tsx` visualisiert diese Daten als Tabellen (Dispute-Queue, Reconciliation-Warnungen)
-    und Kennzahlen (Durchschnitt/Median/90. Perzentil, Overdue-Warteschlange).
+    und Kennzahlen (Durchschnitt/Median/90. Perzentil, Overdue-Warteschlange) und bietet Buttons für Status-/Assignment-Wechsel
+    sowie Inline-Formulare für Escrow-Holds, Vergleichsvorschläge und Auszahlungen.
+  * `__tests__/deal-dispute-e2e.test.ts` fährt den kompletten Lifecycle (Workspace-Raising, Admin-Triage, Escrow-Hold, Vergleich,
+    Auszahlung, Statusabschluss) gegen die Server Actions und das Event-Fan-out, sodass Integrationsbrüche sofort auffallen.
+  * `lib/jobs/disputes/sla.ts` registriert den `deal-dispute-sla-monitor`, der SLA-Verletzungen automatisch protokolliert und
+    Eskalationen im Timeline-Stream veröffentlicht.
   * `__tests__/escrow-reconciliation-job.test.ts` validiert den Reconciliation-Job für Matching- und Mismatch-Szenarien samt
     Idempotenzkontrolle, damit Initiative 2 Aufgabe 3 regressionssicher bleibt.
 * The operations console lists attempt counters, backlog depth (missed run count + minutes overdue), next/last run timestamps,
@@ -312,7 +616,10 @@ The resolved profile populates `NegotiationSnapshot.premium`, unlocking premium-
 * `DealContractDocument`: Archives issued envelopes/documents including provider IDs, status, and completion timestamps.
 * `ContractIntentMetric`: Captures envelope lifecycle + participant signature analytics without broad telemetry ingestion.
 * `EscrowAccount`: Mirrors escrow account state and expected funds.
-* `EscrowTransaction`: Ledger for escrow fund, release, and refund events.
+* `EscrowTransaction`: Ledger for escrow fund, release, refund, and dispute-specific hold/payout adjustments.
+* `DealDispute`: Persistiert Dispute-Summary, SLA-Fälligkeiten, Lifecycle-Status, Severity, Assignment-Infos sowie Hold-,
+  Vergleichs- und Auszahlungsbeträge je Negotiation.
+* `DealDisputeEvent`: Audit-Trail für Statuswechsel, Notizen, Assignment-Änderungen, Treuhand-Meilensteine und Eskalationen.
 
 ## Enums
 
@@ -322,9 +629,14 @@ The resolved profile populates `NegotiationSnapshot.premium`, unlocking premium-
 * `ContractEnvelopeStatus`: Reflects provider envelope lifecycle (draft, issued, partially signed, completed, void, failed).
 * `ContractIntentEventType`: Enumerates analytics events emitted during issuance, signatures, completion, and declines.
 * `EscrowStatus`: Monitors escrow readiness, funding, release, and dispute states.
-* `EscrowTransactionType`: Categorises escrow ledger events.
+* `EscrowTransactionType`: Categorises escrow ledger events (fund, release/refund, dispute hold/release/payout adjustments).
+* `DealDisputeStatus`: Lifecycle für Disputes (offen, in Prüfung, Rückfrage, eskaliert, gelöst, abgeschlossen).
+* `DealDisputeSeverity`: Klassifiziert Auswirkungen (niedrig bis kritisch) für SLA-Priorisierung.
+* `DealDisputeCategory`: Kategorisiert Ursachen (Escrow, Lieferung, Qualität, Sonstiges).
+* `DealDisputeEventType`: Audit-Events (Statuswechsel, Eskalation, Assignment, SLA-Vermerke, Evidenz sowie Escrow-Holds,
+  Vergleichsvorschläge und Auszahlungen).
 * `NegotiationActivityType`: Enumerates persisted timeline events (creation, counters, signatures, SLA warnings, escrow disputes,
-  reconciliation alerts).
+  reconciliation alerts, Treuhand-Holds/-Vergleiche/-Auszahlungen und Dispute-SLA-Verletzungen).
 * `NegotiationActivityAudience`: Marks activity visibility (participants vs. admin).
 
 ### Contract Intent Analytics

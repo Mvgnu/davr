@@ -34,7 +34,19 @@ export function AdminPremiumUpgradeFlow({ tier = 'PREMIUM' }: AdminPremiumUpgrad
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload?.error ?? 'Upgrade fehlgeschlagen');
+        const errorMessage =
+          payload?.message ?? payload?.error ??
+          (response.status === 503
+            ? 'Zahlungsanbieter steht derzeit nicht zur Verfügung.'
+            : 'Upgrade fehlgeschlagen');
+        throw new Error(errorMessage);
+      }
+
+      if (payload?.checkoutSession?.url) {
+        setStatus('success');
+        setMessage('Weiterleitung zum Stripe-Checkout …');
+        window.location.assign(payload.checkoutSession.url);
+        return;
       }
 
       setStatus('success');

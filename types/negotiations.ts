@@ -1,5 +1,5 @@
 /**
- * meta: module=negotiations type=snapshot version=0.1 owner=platform
+ * meta: module=negotiations type=snapshot version=0.2 owner=platform
  */
 export interface NegotiationActivity {
   id: string;
@@ -56,6 +56,7 @@ export interface NegotiationContract {
   status: string;
   draftTerms?: string | null;
   documentUrl?: string | null;
+  currentRevisionId?: string | null;
   buyerSignedAt?: string | null;
   sellerSignedAt?: string | null;
   finalizedAt?: string | null;
@@ -66,6 +67,39 @@ export interface NegotiationContract {
   participantStates?: Record<string, ContractParticipantState> | null;
   documents?: NegotiationContractDocument[];
   lastError?: string | null;
+}
+
+export interface ContractRevisionAttachment {
+  id: string;
+  name: string;
+  url: string;
+  mimeType?: string | null;
+}
+
+export interface ContractRevisionComment {
+  id: string;
+  body: string;
+  status: string;
+  anchor?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  author: { id: string; name?: string | null; email?: string | null };
+  resolvedBy?: { id: string; name?: string | null; email?: string | null } | null;
+  resolvedAt?: string | null;
+}
+
+export interface ContractRevisionSnapshot {
+  id: string;
+  version: number;
+  status: string;
+  isCurrent: boolean;
+  summary?: string | null;
+  body: string;
+  attachments?: ContractRevisionAttachment[] | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: { id: string; name?: string | null; email?: string | null };
+  comments: ContractRevisionComment[];
 }
 
 export interface ContractParticipantState {
@@ -84,10 +118,82 @@ export interface NegotiationContractDocument {
   completedAt?: string | null;
 }
 
+export interface NegotiationDisputeEvidence {
+  id: string;
+  type: string;
+  url: string;
+  label?: string | null;
+  uploadedAt: string;
+}
+
+export interface NegotiationDisputeEvent {
+  type: string;
+  status?: string | null;
+  message?: string | null;
+  createdAt: string;
+}
+
+export interface NegotiationDispute {
+  id: string;
+  status: string;
+  severity: string;
+  category: string;
+  summary: string;
+  description?: string | null;
+  requestedOutcome?: string | null;
+  raisedAt: string;
+  slaDueAt?: string | null;
+  slaBreachedAt?: string | null;
+  raisedBy: { id: string; name?: string | null; role?: string | null };
+  assignedTo?: { id: string; name?: string | null; email?: string | null } | null;
+  holdAmount?: number;
+  counterProposalAmount?: number | null;
+  resolutionPayoutAmount?: number | null;
+  escrowStatus?: string | null;
+  escrowCurrency?: string | null;
+  evidence: NegotiationDisputeEvidence[];
+  latestEvent?: NegotiationDisputeEvent | null;
+}
+
 export interface PremiumUpgradePrompt {
   headline: string;
   description: string;
   cta: string;
+}
+
+export interface NegotiationFulfilmentMilestone {
+  id: string;
+  type: string;
+  occurredAt: string;
+  notes?: string | null;
+  recordedBy?: { id: string; name?: string | null } | null;
+  payload?: Record<string, unknown> | null;
+}
+
+export interface NegotiationFulfilmentReminder {
+  id: string;
+  type: string;
+  scheduledFor: string;
+  sentAt?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface NegotiationFulfilmentOrder {
+  id: string;
+  status: string;
+  reference?: string | null;
+  pickupWindowStart?: string | null;
+  pickupWindowEnd?: string | null;
+  pickupLocation?: string | null;
+  deliveryLocation?: string | null;
+  carrierName?: string | null;
+  carrierContact?: string | null;
+  carrierServiceLevel?: string | null;
+  trackingNumber?: string | null;
+  externalId?: string | null;
+  specialInstructions?: string | null;
+  milestones: NegotiationFulfilmentMilestone[];
+  reminders: NegotiationFulfilmentReminder[];
 }
 
 export interface PremiumViewerProfile {
@@ -132,9 +238,12 @@ export interface NegotiationSnapshot {
   activities: NegotiationActivity[];
   escrowAccount?: EscrowAccountSnapshot | null;
   contract?: NegotiationContract | null;
+  contractRevisions: ContractRevisionSnapshot[];
   premiumTier?: string | null;
   premium?: NegotiationPremiumSummary | null;
   listing: NegotiationListingSummary;
+  disputes: NegotiationDispute[];
+  fulfilmentOrders: NegotiationFulfilmentOrder[];
 }
 
 export interface NegotiationApiResponse {
